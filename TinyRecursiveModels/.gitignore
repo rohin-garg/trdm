@@ -1,0 +1,24 @@
+# Bytecode
+__pycache__/
+*.pyc
+
+# Local data + checkpoints
+outputs/
+logs/
+wandb/
+data/
+datasets/
+
+# Virtual envs or caches
+*.egg-info/
+.DS_Store
+*.log
+
+# Analysis artifacts
+analysis/__pycache__/
+utils/__pycache__/
+evaluators/__pycache__/
+dataset/__pycache__/
+models/__pycache__/
+models/recursive_reasoning/__pycache__/
+checkpoints/
