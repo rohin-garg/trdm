@@ -40,7 +40,7 @@ The harness therefore records **7** latents per H-cycle: six `z_L` updates plus 
 2. Trajectory capture and streaming
 -----------------------------------
 
-With ~1M training examples, storing all tracjetories would take up 1e6 * 16 * 3 * 7  * 916 * 512 * 2 bytes = 300 TB in FP32, which is too much. We hence stream inference during training.
+With ~1M training examples, storing all tracjetories would take up 1e6 * 16 * 3 * 7  * 916 * 512 * 4 bytes = 600 TB in FP32, which is too much. We hence stream inference during training.
 
 `diffusion_streaming.py` wrap the frozen TRM so we can harvest trajectories without touching storage. `_BaseTrajectoryStreamer` reconstructs the pretraining dataloader, runs the TRM forward pass, and keeps everything on GPU until the copy to CPU tensors at the end of `_next_trajectory_batch`:
 

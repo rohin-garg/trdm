@@ -7,8 +7,11 @@ import json
 import math
 import os
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple, Optional
+
+import random
 
 import torch
 import torch.distributed as dist
@@ -27,6 +30,7 @@ from models.diffusion_916 import SingleLayerDiffusion, DiffusionSchedule
 from evaluators.arc import ARC
 from pretrain import create_dataloader, create_model
 from dataset.common import PuzzleDatasetMetadata
+from dataset.build_arc_dataset import inverse_aug
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-device", default="cuda:0", help="Device to run evaluation on")
     parser.add_argument("--eval-after-train", action="store_true", help="Run evaluation after training completes")
     parser.add_argument("--eval-interval-steps", type=int, default=0, help="Run evaluation every N training steps (0 disables)")
+    parser.add_argument("--eval-num-aug-samples", type=int, default=0, help="Maximum augmentations per base puzzle to evaluate (0 = all)")
     return parser.parse_args()
 
 
@@ -69,7 +74,14 @@ def init_distributed() -> tuple[int, int, int]:
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         return rank, world_size, local_rank
 
-    dist.init_process_group(backend="nccl")
+    timeout_env = os.environ.get("TORCH_DISTRIBUTED_DEFAULT_TIMEOUT")
+    if timeout_env is None:
+        timeout_env = os.environ.get("TRAIN_DDP_TIMEOUT_SECONDS")
+    try:
+        timeout_seconds = float(timeout_env) if timeout_env is not None else 7200.0
+    except ValueError:
+        timeout_seconds = 7200.0
+    dist.init_process_group(backend="nccl", timeout=timedelta(seconds=timeout_seconds))
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     local_rank = int(os.environ.get("LOCAL_RANK", rank % torch.cuda.device_count()))
@@ -268,6 +280,21 @@ def _run_layer_evaluation(
     inner = trm_model.model.inner  # type: ignore[attr-defined]
     puzzle_emb_len = inner.puzzle_emb_len
 
+    allowed_augments: Optional[Dict[str, set]] = None
+    if args.eval_num_aug_samples > 0:
+        grouped: Dict[str, List[str]] = {}
+        for identifier, name in enumerate(arc_evaluator.identifier_map):
+            if identifier == arc_evaluator.blank_identifier_id:
+                continue
+            if not name:
+                continue
+            base_name, _ = inverse_aug(name)
+            grouped.setdefault(base_name, []).append(name)
+        allowed_augments = {
+            base: set(random.sample(names, min(len(names), args.eval_num_aug_samples)))
+            for base, names in grouped.items()
+        }
+
     total_puzzles = 0
     start_time = time.time()
 
@@ -276,11 +303,41 @@ def _run_layer_evaluation(
             if split_name != "test":
                 continue
 
-            inputs = batch["inputs"].to(eval_device)
-            puzzle_ids = batch["puzzle_identifiers"].to(eval_device)
-            batch_size = inputs.size(0)
+            full_inputs = batch["inputs"]
+            full_ids = batch["puzzle_identifiers"]
+            batch_size_full = full_inputs.size(0)
 
-            batch_device = {k: v.to(eval_device) for k, v in batch.items() if isinstance(v, torch.Tensor)}
+            if allowed_augments is not None:
+                keep_indices: List[int] = []
+                for idx in range(batch_size_full):
+                    pid = int(full_ids[idx].item())
+                    if pid == arc_evaluator.blank_identifier_id:
+                        continue
+                    name = arc_evaluator.identifier_map[pid]
+                    base_name, _ = inverse_aug(name)
+                    allowed_set = allowed_augments.get(base_name)
+                    if allowed_set is None:
+                        keep_indices.append(idx)
+                    elif name in allowed_set:
+                        keep_indices.append(idx)
+                        allowed_set.remove(name)
+                if not keep_indices:
+                    continue
+                keep_tensor = torch.tensor(keep_indices, dtype=torch.long)
+                inputs = full_inputs.index_select(0, keep_tensor).to(eval_device)
+                puzzle_ids = full_ids.index_select(0, keep_tensor).to(eval_device)
+                subset_batch = {
+                    k: (v.index_select(0, keep_tensor) if isinstance(v, torch.Tensor) else v)
+                    for k, v in batch.items()
+                }
+                batch_size = inputs.size(0)
+            else:
+                inputs = full_inputs.to(eval_device)
+                puzzle_ids = full_ids.to(eval_device)
+                subset_batch = batch
+                batch_size = inputs.size(0)
+
+            batch_device = {k: v.to(eval_device) for k, v in subset_batch.items() if isinstance(v, torch.Tensor)}
             carry = trm_model.initial_carry(batch_device)
             init_z_H = carry.inner_carry.z_H
             init_z_L = carry.inner_carry.z_L
@@ -292,8 +349,8 @@ def _run_layer_evaluation(
             init_z_L = init_z_L.to(diffusion_dtype)
 
             base_batch = {
-                "inputs": batch["inputs"].cpu(),
-                "puzzle_identifiers": batch["puzzle_identifiers"].cpu(),
+                "inputs": subset_batch["inputs"].cpu(),
+                "puzzle_identifiers": subset_batch["puzzle_identifiers"].cpu(),
             }
 
             for _ in range(args.eval_num_samples):
