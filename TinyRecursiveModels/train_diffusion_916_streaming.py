@@ -173,10 +173,9 @@ def _reverse_diffusion_layer(
     model: SingleLayerDiffusion,
     schedule: DiffusionSchedule,
     condition_inputs: Tuple[torch.Tensor, ...],
-    generator: Optional[torch.Generator] = None,
 ) -> torch.Tensor:
     device = condition_inputs[0].device
-    x = torch.randn_like(condition_inputs[0], generator=generator)
+    x = torch.randn_like(condition_inputs[0])
     timesteps = schedule.betas.shape[0]
     for step in reversed(range(timesteps)):
         t = torch.full((x.shape[0],), step, device=device, dtype=torch.long)
@@ -186,7 +185,7 @@ def _reverse_diffusion_layer(
         sqrt_one_minus = schedule.sqrt_one_minus_alphas_cumprod[step]
         x = sqrt_recip_alpha * (x - beta / sqrt_one_minus * pred_noise)
         if step > 0:
-            noise = torch.randn_like(x, generator=generator)
+            noise = torch.randn_like(x)
             x = x + torch.sqrt(beta) * noise
     return x
 
@@ -197,6 +196,7 @@ def _prepare_trm_evaluator(
     batch_size: int,
     device: torch.device,
 ) -> Tuple[torch.nn.Module, data.DataLoader, PuzzleDatasetMetadata, object]:
+    os.environ.setdefault("DISABLE_COMPILE", "1")
     arch_cfg = _load_arch_config()
     pretrain_cfg = _build_pretrain_config(
         arch_cfg,
@@ -280,34 +280,22 @@ def _run_layer_evaluation(
     inner = trm_model.model.inner  # type: ignore[attr-defined]
     puzzle_emb_len = inner.puzzle_emb_len
 
-    allowed_augments: Optional[Dict[str, set]] = None
+    allowed_aug_counts: Optional[Dict[str, int]] = None
     if args.eval_num_aug_samples > 0:
-        grouped: Dict[str, List[str]] = {}
-        for identifier, name in enumerate(arc_evaluator.identifier_map):
-            if identifier == arc_evaluator.blank_identifier_id:
-                continue
-            if not name:
-                continue
-            base_name, _ = inverse_aug(name)
-            grouped.setdefault(base_name, []).append(name)
-        allowed_augments = {
-            base: set(random.sample(names, min(len(names), args.eval_num_aug_samples)))
-            for base, names in grouped.items()
-        }
+        allowed_aug_counts = {}
 
     total_puzzles = 0
     start_time = time.time()
 
     with torch.no_grad():
         for split_name, batch, _ in eval_loader:
-            if split_name != "test":
-                continue
+            # PuzzleDataset yields per-set names for the test split, so do not filter on the label.
 
             full_inputs = batch["inputs"]
             full_ids = batch["puzzle_identifiers"]
             batch_size_full = full_inputs.size(0)
 
-            if allowed_augments is not None:
+            if allowed_aug_counts is not None:
                 keep_indices: List[int] = []
                 for idx in range(batch_size_full):
                     pid = int(full_ids[idx].item())
@@ -315,12 +303,11 @@ def _run_layer_evaluation(
                         continue
                     name = arc_evaluator.identifier_map[pid]
                     base_name, _ = inverse_aug(name)
-                    allowed_set = allowed_augments.get(base_name)
-                    if allowed_set is None:
-                        keep_indices.append(idx)
-                    elif name in allowed_set:
-                        keep_indices.append(idx)
-                        allowed_set.remove(name)
+                    count = allowed_aug_counts.get(base_name, 0)
+                    if count >= args.eval_num_aug_samples:
+                        continue
+                    keep_indices.append(idx)
+                    allowed_aug_counts[base_name] = count + 1
                 if not keep_indices:
                     continue
                 keep_tensor = torch.tensor(keep_indices, dtype=torch.long)
@@ -344,9 +331,9 @@ def _run_layer_evaluation(
             embeddings = inner._input_embeddings(inputs, puzzle_ids)
 
             diffusion_dtype = diffusion_model.time_mlp[0].weight.dtype
-            embeddings = embeddings.to(diffusion_dtype)
-            init_z_H = init_z_H.to(diffusion_dtype)
-            init_z_L = init_z_L.to(diffusion_dtype)
+            embeddings = embeddings.to(device=eval_device, dtype=diffusion_dtype)
+            init_z_H = init_z_H.to(device=eval_device, dtype=diffusion_dtype)
+            init_z_L = init_z_L.to(device=eval_device, dtype=diffusion_dtype)
 
             base_batch = {
                 "inputs": subset_batch["inputs"].cpu(),
@@ -541,11 +528,28 @@ def main():
                         f"Epoch {epoch} | batch {epoch_batches} | loss {loss_value:.6f} | pending {len(pending_examples)}"
                     )
 
-                if eval_interval and global_step % eval_interval == 0:
+                should_eval = eval_interval and (global_step % eval_interval == 0)
+
+                if should_eval:
+                    torch.cuda.synchronize(device)
+                    if dist.is_initialized():
+                        dist.barrier(device_ids=[local_rank])
                     if rank == 0:
                         state_dict_cpu = {k: v.detach().cpu() for k, v in ddp_model.module.state_dict().items()}
                         sched_state = _schedule_state_from_schedule(schedule)
                         label = f"step_{global_step}"
+                        checkpoint_path = Path(args.output_dir) / f"checkpoint_{label}.pt"
+                        torch.save(
+                            {
+                                "model_state_dict": state_dict_cpu,
+                                "optimizer_state_dict": optimizer.state_dict(),
+                                "global_step": global_step,
+                                "args": vars(args),
+                                "schedule": sched_state,
+                            },
+                            checkpoint_path,
+                        )
+                        print(f"Saved checkpoint to {checkpoint_path}")
                         output_path = Path(args.output_dir) / f"eval_{label}.json"
                         metrics = _run_layer_evaluation(
                             args,
@@ -556,7 +560,8 @@ def main():
                             output_path=output_path,
                         )
                         print(json.dumps(metrics, indent=2))
-                    dist.barrier()
+                    if dist.is_initialized():
+                        dist.barrier(device_ids=[local_rank])
                     ddp_model.train()
 
                 if time.time() - job_start >= time_limit:

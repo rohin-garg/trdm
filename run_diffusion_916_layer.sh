@@ -27,16 +27,9 @@ torchrun --standalone --nproc_per_node=4 --master_port=29931 \
   --trm-global-batch-size 32 \
   --train-batch-size 64 \
   --num-epochs 50 \
-  --time-limit-seconds 86400 \
+  --time-limit-seconds 172800 \
   --log-interval 50 \
   --grad-accumulation 1 \
   --dtype float32 \
   --max-trm-batches-per-epoch 32000 \
-  --eval-interval-steps 3000 \
-  --eval-num-samples 1 \
-  --eval-num-aug-samples 8 \
-  --eval-trm-batch-size 16 \
-  --eval-pass-ks 1 2 \
-  --eval-submission-k 2 \
-  --eval-device cuda:0 \
-  --eval-after-train >> "$LOG" 2>&1
+  --eval-interval-steps 33000 >> "$LOG" 2>&1

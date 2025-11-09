@@ -213,11 +213,12 @@ class ARC:
             with open(os.path.join(save_path, "submission.json"), "w") as f:
                 json.dump(submission, f)
 
-            for r in range(world_size):
-                try:
-                    os.remove(output_dir / f"rank_{r}.json")
-                except FileNotFoundError:
-                    pass
+            if os.getenv("ARC_KEEP_RANK_FILES") != "1":
+                for r in range(world_size):
+                    try:
+                        os.remove(output_dir / f"rank_{r}.json")
+                    except FileNotFoundError:
+                        pass
 
         # Final result
         all_results = {f"ARC/pass@{k}": correct[i] / len(self.test_puzzles) for i, k in enumerate(self.pass_Ks)}
