@@ -64,6 +64,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval-after-train", action="store_true", help="Run evaluation after training completes")
     parser.add_argument("--eval-interval-steps", type=int, default=0, help="Run evaluation every N training steps (0 disables)")
     parser.add_argument("--eval-num-aug-samples", type=int, default=0, help="Maximum augmentations per base puzzle to evaluate (0 = all)")
+    parser.add_argument("--eval-max-puzzles", type=int, default=0, help="Limit number of base puzzles evaluated (0 = all)")
+    parser.add_argument("--eval-time-limit-seconds", type=int, default=3600, help="Wall-clock budget for evaluation runs (0 disables)")
+    parser.add_argument("--resume-checkpoint", help="Path to a diffusion checkpoint to resume training from")
     return parser.parse_args()
 
 
@@ -195,6 +198,8 @@ def _prepare_trm_evaluator(
     trm_checkpoint: str,
     batch_size: int,
     device: torch.device,
+    rank: int,
+    world_size: int,
 ) -> Tuple[torch.nn.Module, data.DataLoader, PuzzleDatasetMetadata, object]:
     os.environ.setdefault("DISABLE_COMPILE", "1")
     arch_cfg = _load_arch_config()
@@ -211,11 +216,11 @@ def _prepare_trm_evaluator(
         test_set_mode=True,
         epochs_per_iter=1,
         global_batch_size=pretrain_cfg.global_batch_size,
-        rank=0,
-        world_size=1,
+        rank=rank,
+        world_size=world_size,
     )
 
-    trm_model, _, _ = create_model(pretrain_cfg, metadata, rank=0, world_size=1)
+    trm_model, _, _ = create_model(pretrain_cfg, metadata, rank=rank, world_size=world_size)
     trm_model = trm_model.to(device)
     trm_model.eval()
     for param in trm_model.parameters():
@@ -233,6 +238,9 @@ def _run_layer_evaluation(
     step_label: str = "eval",
     device_override: Optional[str] = None,
     output_path: Optional[Path] = None,
+    rank: int = 0,
+    world_size: int = 1,
+    group: Optional[dist.ProcessGroup] = None,
 ) -> Dict[str, float]:
     eval_data_dir = args.eval_data_dir or args.data_dir
     trm_ckpt = args.eval_trm_checkpoint or args.checkpoint_path
@@ -243,6 +251,8 @@ def _run_layer_evaluation(
         trm_ckpt,
         args.eval_trm_batch_size,
         eval_device,
+        rank,
+        world_size,
     )
 
     seq_len = metadata.seq_len + getattr(arch_cfg, "puzzle_emb_len", 0)
@@ -277,6 +287,10 @@ def _run_layer_evaluation(
     )
     arc_evaluator.begin_eval()
 
+    if args.eval_max_puzzles > 0:
+        limited = dict(list(arc_evaluator.test_puzzles.items())[: args.eval_max_puzzles])
+        arc_evaluator.test_puzzles = limited
+
     inner = trm_model.model.inner  # type: ignore[attr-defined]
     puzzle_emb_len = inner.puzzle_emb_len
 
@@ -284,32 +298,51 @@ def _run_layer_evaluation(
     if args.eval_num_aug_samples > 0:
         allowed_aug_counts = {}
 
+    allowed_base_names: Optional[set[str]] = None
+    if args.eval_max_puzzles > 0:
+        allowed_base_names = set(arc_evaluator.test_puzzles.keys())
+
     total_puzzles = 0
+    last_log = 0
+    progress_interval = max(args.eval_trm_batch_size, 100)
     start_time = time.time()
+    time_limit = getattr(args, "eval_time_limit_seconds", 0) or 0
 
     with torch.no_grad():
         for split_name, batch, _ in eval_loader:
             # PuzzleDataset yields per-set names for the test split, so do not filter on the label.
 
+            if time_limit and time.time() - start_time > time_limit:
+                raise TimeoutError(
+                    f"Evaluation exceeded time limit of {time_limit} seconds while processing split {split_name}."
+                )
+
             full_inputs = batch["inputs"]
             full_ids = batch["puzzle_identifiers"]
             batch_size_full = full_inputs.size(0)
 
-            if allowed_aug_counts is not None:
-                keep_indices: List[int] = []
+            keep_indices: Optional[List[int]] = None
+            if allowed_aug_counts is not None or allowed_base_names is not None:
+                selected: List[int] = []
                 for idx in range(batch_size_full):
                     pid = int(full_ids[idx].item())
                     if pid == arc_evaluator.blank_identifier_id:
                         continue
                     name = arc_evaluator.identifier_map[pid]
                     base_name, _ = inverse_aug(name)
-                    count = allowed_aug_counts.get(base_name, 0)
-                    if count >= args.eval_num_aug_samples:
+                    if allowed_base_names is not None and base_name not in allowed_base_names:
                         continue
-                    keep_indices.append(idx)
-                    allowed_aug_counts[base_name] = count + 1
-                if not keep_indices:
+                    if allowed_aug_counts is not None:
+                        count = allowed_aug_counts.get(base_name, 0)
+                        if count >= args.eval_num_aug_samples:
+                            continue
+                        allowed_aug_counts[base_name] = count + 1
+                    selected.append(idx)
+                if not selected:
                     continue
+                keep_indices = selected
+
+            if keep_indices is not None:
                 keep_tensor = torch.tensor(keep_indices, dtype=torch.long)
                 inputs = full_inputs.index_select(0, keep_tensor).to(eval_device)
                 puzzle_ids = full_ids.index_select(0, keep_tensor).to(eval_device)
@@ -326,14 +359,19 @@ def _run_layer_evaluation(
 
             batch_device = {k: v.to(eval_device) for k, v in subset_batch.items() if isinstance(v, torch.Tensor)}
             carry = trm_model.initial_carry(batch_device)
-            init_z_H = carry.inner_carry.z_H
-            init_z_L = carry.inner_carry.z_L
+
+            inner_carry = carry.inner_carry
+            inner_carry.z_H = inner_carry.z_H.to(eval_device)
+            inner_carry.z_L = inner_carry.z_L.to(eval_device)
+            reset_mask = torch.ones((batch_size,), device=eval_device, dtype=torch.bool)
+            seeded_carry = inner.reset_carry(reset_mask, inner_carry)
+
             embeddings = inner._input_embeddings(inputs, puzzle_ids)
 
             diffusion_dtype = diffusion_model.time_mlp[0].weight.dtype
             embeddings = embeddings.to(device=eval_device, dtype=diffusion_dtype)
-            init_z_H = init_z_H.to(device=eval_device, dtype=diffusion_dtype)
-            init_z_L = init_z_L.to(device=eval_device, dtype=diffusion_dtype)
+            init_z_H = seeded_carry.z_H.to(device=eval_device, dtype=diffusion_dtype)
+            init_z_L = seeded_carry.z_L.to(device=eval_device, dtype=diffusion_dtype)
 
             base_batch = {
                 "inputs": subset_batch["inputs"].cpu(),
@@ -374,24 +412,47 @@ def _run_layer_evaluation(
                 )
 
             total_puzzles += batch_size
+            if rank == 0 and total_puzzles - last_log >= progress_interval:
+                elapsed_now = time.time() - start_time
+                print(
+                    f"[Eval][{step_label}] processed {total_puzzles} puzzles "
+                    f"in {elapsed_now:.1f}s on rank 0"
+                )
+                last_log = total_puzzles
 
     save_dir = Path(args.output_dir) / "eval_artifacts"
     save_dir.mkdir(parents=True, exist_ok=True)
-    results = arc_evaluator.result(str(save_dir), rank=0, world_size=1)
+    results = arc_evaluator.result(str(save_dir), rank=rank, world_size=world_size, group=group)
+
+    if eval_device.type == "cuda":
+        torch.cuda.synchronize(eval_device)
 
     elapsed = time.time() - start_time
+    global_puzzles = total_puzzles
+    global_elapsed = elapsed
+
+    if dist.is_initialized() and world_size > 1:
+        total_tensor = torch.tensor([float(total_puzzles)], device=eval_device)
+        elapsed_tensor = torch.tensor([float(elapsed)], device=eval_device)
+        dist.reduce(total_tensor, dst=0, op=dist.ReduceOp.SUM, group=group)
+        dist.reduce(elapsed_tensor, dst=0, op=dist.ReduceOp.MAX, group=group)
+        if rank == 0:
+            global_puzzles = int(total_tensor.item())
+            global_elapsed = float(elapsed_tensor.item())
+
     metrics: Dict[str, float] = {
-        "puzzles_evaluated": total_puzzles,
+        "puzzles_evaluated": int(global_puzzles),
         "num_samples_per_aug": args.eval_num_samples,
-        "elapsed_seconds": elapsed,
+        "elapsed_seconds": float(global_elapsed),
     }
     if results:
         metrics.update(results)
     metrics["step"] = step_label
 
-    output_path = output_path or (Path(args.output_dir) / f"eval_{step_label}.json")
-    with output_path.open("w", encoding="utf-8") as handle:
-        json.dump({"metrics": metrics, "args": vars(args)}, handle, indent=2)
+    if rank == 0:
+        output_file = output_path or (Path(args.output_dir) / f"eval_{step_label}.json")
+        with output_file.open("w", encoding="utf-8") as handle:
+            json.dump({"metrics": metrics, "args": vars(args)}, handle, indent=2)
 
     return metrics
 
@@ -434,6 +495,27 @@ def main():
     args = parse_args()
 
     if args.eval_only:
+        eval_rank = 0
+        eval_world = 1
+        eval_group: Optional[dist.ProcessGroup] = None
+        local_rank_env: Optional[int] = None
+
+        world_env = int(os.environ.get("WORLD_SIZE", "1"))
+        if not dist.is_initialized() and world_env > 1:
+            eval_rank, eval_world, local_rank_env = init_distributed()
+            if torch.cuda.is_available():
+                torch.cuda.set_device(local_rank_env)
+            eval_group = dist.group.WORLD
+        elif dist.is_initialized():
+            eval_rank = dist.get_rank()
+            eval_world = dist.get_world_size()
+            eval_group = dist.group.WORLD
+            local_rank_env = int(os.environ.get("LOCAL_RANK", eval_rank % max(torch.cuda.device_count(), 1)))
+
+        device_override = args.eval_device
+        if local_rank_env is not None:
+            device_override = f"cuda:{local_rank_env}"
+
         checkpoint = args.eval_checkpoint
         if checkpoint is None:
             checkpoint = Path(args.output_dir) / "final_checkpoint.pt"
@@ -441,10 +523,16 @@ def main():
             args,
             checkpoint_path=Path(checkpoint),
             step_label="eval_only",
-            device_override=args.eval_device,
+            device_override=device_override,
             output_path=Path(args.eval_output_path) if args.eval_output_path else None,
+            rank=eval_rank,
+            world_size=eval_world,
+            group=eval_group,
         )
         print(json.dumps(metrics, indent=2))
+        if dist.is_initialized():
+            dist.barrier()
+            dist.destroy_process_group()
         return
 
     rank, world_size, local_rank = init_distributed()
@@ -473,6 +561,26 @@ def main():
     ddp_model, optimizer, schedule = create_model_and_optimizer(seq_len, hidden_dim, args, device)
     optimizer.zero_grad(set_to_none=True)
 
+    resume_step = 0
+    if args.resume_checkpoint:
+        if rank == 0:
+            print(f"Resuming diffusion training from {args.resume_checkpoint}")
+        ckpt_payload = torch.load(args.resume_checkpoint, map_location="cpu")
+        model_state = ckpt_payload.get("model_state_dict") or ckpt_payload
+        ddp_model.module.load_state_dict(model_state)
+        opt_state = ckpt_payload.get("optimizer_state_dict")
+        if opt_state is not None:
+            optimizer.load_state_dict(opt_state)
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(device)
+        schedule_state_cpu = ckpt_payload.get("schedule")
+        if schedule_state_cpu is not None:
+            schedule = _schedule_from_state(schedule_state_cpu, args.timesteps, device)
+        resume_step = int(ckpt_payload.get("global_step", 0))
+        torch.cuda.synchronize(device)
+
     if rank == 0:
         config_path = Path(args.output_dir) / "config.json"
         with config_path.open("w", encoding="utf-8") as handle:
@@ -489,7 +597,7 @@ def main():
             )
 
     job_start = time.time()
-    global_step = 0
+    global_step = resume_step
     time_limit = args.time_limit_seconds
     eval_interval = args.eval_interval_steps
     for epoch in range(1, args.num_epochs + 1):
@@ -534,11 +642,11 @@ def main():
                     torch.cuda.synchronize(device)
                     if dist.is_initialized():
                         dist.barrier(device_ids=[local_rank])
+                    state_dict_cpu = {k: v.detach().cpu() for k, v in ddp_model.module.state_dict().items()}
+                    sched_state = _schedule_state_from_schedule(schedule)
+                    label = f"step_{global_step}"
+                    checkpoint_path = Path(args.output_dir) / f"checkpoint_{label}.pt"
                     if rank == 0:
-                        state_dict_cpu = {k: v.detach().cpu() for k, v in ddp_model.module.state_dict().items()}
-                        sched_state = _schedule_state_from_schedule(schedule)
-                        label = f"step_{global_step}"
-                        checkpoint_path = Path(args.output_dir) / f"checkpoint_{label}.pt"
                         torch.save(
                             {
                                 "model_state_dict": state_dict_cpu,
@@ -550,15 +658,22 @@ def main():
                             checkpoint_path,
                         )
                         print(f"Saved checkpoint to {checkpoint_path}")
-                        output_path = Path(args.output_dir) / f"eval_{label}.json"
-                        metrics = _run_layer_evaluation(
-                            args,
-                            model_state_dict=state_dict_cpu,
-                            schedule_state=sched_state,
-                            step_label=label,
-                            device_override=f"cuda:{local_rank}",
-                            output_path=output_path,
-                        )
+                    if dist.is_initialized():
+                        dist.barrier(device_ids=[local_rank])
+                    eval_output_path = Path(args.output_dir) / f"eval_{label}.json" if rank == 0 else None
+                    eval_group = dist.group.WORLD if dist.is_initialized() else None
+                    metrics = _run_layer_evaluation(
+                        args,
+                        model_state_dict=state_dict_cpu,
+                        schedule_state=sched_state,
+                        step_label=label,
+                        device_override=f"cuda:{local_rank}",
+                        output_path=eval_output_path,
+                        rank=rank,
+                        world_size=world_size,
+                        group=eval_group,
+                    )
+                    if rank == 0:
                         print(json.dumps(metrics, indent=2))
                     if dist.is_initialized():
                         dist.barrier(device_ids=[local_rank])
@@ -610,6 +725,8 @@ def main():
 
     dist.barrier()
 
+    final_sched_state = _schedule_state_from_schedule(schedule)
+
     if rank == 0:
         checkpoint_path = Path(args.output_dir) / "final_checkpoint.pt"
         torch.save(
@@ -618,25 +735,33 @@ def main():
                 "optimizer_state_dict": optimizer.state_dict(),
                 "global_step": global_step,
                 "args": vars(args),
-                "schedule": _schedule_state_from_schedule(schedule),
+                "schedule": final_sched_state,
             },
             checkpoint_path,
         )
         print(f"Saved checkpoint to {checkpoint_path}")
 
-        if args.eval_after_train:
-            state_dict_cpu = {k: v.detach().cpu() for k, v in ddp_model.module.state_dict().items()}
-            sched_state = _schedule_state_from_schedule(schedule)
-            output_path = Path(args.output_dir) / "eval_final.json"
-            metrics = _run_layer_evaluation(
-                args,
-                model_state_dict=state_dict_cpu,
-                schedule_state=sched_state,
-                step_label="final",
-                device_override=f"cuda:{local_rank}",
-                output_path=output_path,
-            )
-            print(json.dumps(metrics, indent=2))
+    if args.eval_after_train:
+        state_dict_cpu = {k: v.detach().cpu() for k, v in ddp_model.module.state_dict().items()}
+        if dist.is_initialized():
+            dist.barrier(device_ids=[local_rank])
+        final_output_path = Path(args.output_dir) / "eval_final.json" if rank == 0 else None
+        eval_group = dist.group.WORLD if dist.is_initialized() else None
+        final_metrics = _run_layer_evaluation(
+            args,
+            model_state_dict=state_dict_cpu,
+            schedule_state=final_sched_state,
+            step_label="final",
+            device_override=f"cuda:{local_rank}",
+            output_path=final_output_path,
+            rank=rank,
+            world_size=world_size,
+            group=eval_group,
+        )
+        if rank == 0:
+            print(json.dumps(final_metrics, indent=2))
+        if dist.is_initialized():
+            dist.barrier(device_ids=[local_rank])
 
     dist.destroy_process_group()
 
