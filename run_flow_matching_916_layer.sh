@@ -2,12 +2,11 @@
 set -euo pipefail
 
 # increased dataset 10x, decreased augments 10x
-# python dataset/build_sudoku_dataset.py --output-dir data/sudoku-extreme-1k-aug-1000  --subsample-size 10000 --num-aug 100  # 10000 examples, 100 augments
+# python dataset/build_sudoku_dataset.py --output-dir data/sudoku-extreme-1k-aug-1000  --subsample-size 10000 --num-aug 100
 
 # TODO:
   # 1. fix checkpoint path
-  # 2. fix data dir
-  # 3. verify venv/root
+  # 2. verify venv/root
 
 # for sudoku
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
