@@ -130,18 +130,18 @@ class SingleLayerFlow(nn.Module):
     
     def forward(
         self,
-        noisy_target: torch.Tensor,
+        x_t: torch.Tensor,
         timestep: torch.Tensor,
         *condition_inputs: torch.Tensor
     ) -> torch.Tensor:
         """
         Args:
-            noisy_target: [B, seq_len, hidden_dim] - noisy target state
+            x_t: [B, seq_len, hidden_dim] - interpolated state at time t
             timestep: [B] - diffusion timestep indices
             *condition_inputs: variable number of [B, seq_len, hidden_dim] tensors
         
         Returns:
-            predicted_noise: [B, seq_len, hidden_dim]
+            predicted_velocity: [B, seq_len, hidden_dim]
         """
         # Sum all conditioning inputs (additive as in TRM)
         condition = sum(condition_inputs)  # [B, seq_len, hidden_dim]
@@ -170,13 +170,12 @@ class FlowTrainer916:
     
     def __init__(
         self,
-        model: SingleLayerDiffusion,
+        model: SingleLayerFlow,
         timesteps: int = 30,
         lr: float = 3e-4,
         device: torch.device = torch.device("cpu"),
     ):
         self.model = model.to(device)
-        self.schedule = DiffusionSchedule.create(timesteps, device)
         self.timesteps = timesteps
         self.device = device
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr)
@@ -204,11 +203,12 @@ class FlowTrainer916:
         timesteps = torch.randint(0, self.timesteps, (batch_size,), device=self.device, dtype=torch.long)
         
         # Sample noise
-        base_noise = torch.randn_like(target)
+        noise = torch.randn_like(target)
 
-        interpolated = base_noise * (torch.ones_like(timesteps) - timesteps / self.timesteps) + timesteps * target / self.timesteps
-        target_velocity = (target - interpolated) / (torch.fill_like(timesteps, self.timesteps) - timesteps)
-        pred_velocity = self.model(target, timesteps, *condition_inputs)
+        t_normalized = timesteps.float() / self.timesteps  # [0, 1)
+        interpolated = (1 - t_normalized.unsqueeze(-1).unsqueeze(-1)) * noise + t_normalized.unsqueeze(-1).unsqueeze(-1) * target
+        target_velocity = (target - noise) / self.timesteps
+        pred_velocity = self.model(interpolated, timesteps, *condition_inputs)
         
         # Loss
         loss = F.mse_loss(pred_velocity, target_velocity)
@@ -257,11 +257,13 @@ class FlowTrainer916:
         # Start from pure noise
         x = torch.randn(batch_size, seq_len, hidden_dim, device=self.device)
         
-        # solve the ODE using the velocity field from the flow model
+        # Solve the ODE dx/dt = v_t(x_t) using Euler integration
+        dt = 1.0 / self.timesteps
         for step in range(self.timesteps):
+            t = step / self.timesteps  # normalized time [0, 1)
             timesteps = torch.full((batch_size,), step, device=self.device, dtype=torch.long)
             velocity_field = self.model(x, timesteps, *condition_inputs)
-            x = x + velocity_field
+            x = x + dt * velocity_field
 
         return x
     
@@ -270,12 +272,7 @@ class FlowTrainer916:
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'global_step': self.global_step,
-            'schedule': {
-                'betas': self.schedule.betas,
-                'alphas': self.schedule.alphas,
-                'alphas_cumprod': self.schedule.alphas_cumprod,
-            },
+            'global_step': self.global_step
         }, path)
     
     def load_checkpoint(self, path: str):
