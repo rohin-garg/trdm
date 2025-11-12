@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# module load deprecated-modules
+# module load gcc/12.2.0-x86_64
+# module load python/3.10.8-x86_64
+
 # increased dataset 10x, decreased augments 10x
 # python dataset/build_sudoku_dataset.py --output-dir data/sudoku-extreme-1k-aug-1000  --subsample-size 10000 --num-aug 100
 
