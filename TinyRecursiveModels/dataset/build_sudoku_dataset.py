@@ -2,8 +2,8 @@ from typing import Optional
 import os
 import csv
 import json
-import shutil
 import numpy as np
+from numpy.lib.format import open_memmap
 
 from argdantic import ArgParser
 from pydantic import BaseModel
@@ -81,114 +81,121 @@ def convert_subset(set_name: str, config: DataProcessConfig):
 
     # Generate dataset in batches
     num_augments = config.num_aug if set_name == "train" else 0
-    batch_size = min(config.batch_size, len(valid_puzzles))
+    batch_size = min(config.batch_size, len(valid_puzzles)) if len(valid_puzzles) else 0
 
     # Create save directory
     save_dir = os.path.join(config.output_dir, set_name)
     os.makedirs(save_dir, exist_ok=True)
 
-    # Temporary directory for batches
-    temp_dir = os.path.join(save_dir, "temp_batches")
-    os.makedirs(temp_dir, exist_ok=True)
+    # Allocate append-only memmaps for final arrays
+    total_puzzles_expected = len(valid_puzzles)
+    total_examples_expected = total_puzzles_expected * (1 + num_augments)
 
-    all_batch_files = []
-    total_examples = 0
-    total_puzzles = 0
+    inputs_mm = open_memmap(
+        os.path.join(save_dir, "all__inputs.npy"),
+        mode="w+",
+        dtype=np.uint8,
+        shape=(total_examples_expected, 81),
+    )
+    labels_mm = open_memmap(
+        os.path.join(save_dir, "all__labels.npy"),
+        mode="w+",
+        dtype=np.uint8,
+        shape=(total_examples_expected, 81),
+    )
+    puzzle_identifiers_mm = open_memmap(
+        os.path.join(save_dir, "all__puzzle_identifiers.npy"),
+        mode="w+",
+        dtype=np.int32,
+        shape=(total_examples_expected,),
+    )
+    puzzle_indices_mm = open_memmap(
+        os.path.join(save_dir, "all__puzzle_indices.npy"),
+        mode="w+",
+        dtype=np.int32,
+        shape=(total_examples_expected + 1,),
+    )
+    group_indices_mm = open_memmap(
+        os.path.join(save_dir, "all__group_indices.npy"),
+        mode="w+",
+        dtype=np.int32,
+        shape=(total_puzzles_expected + 1,),
+    )
 
-    # Process in batches
-    for batch_start in tqdm(range(0, len(valid_puzzles), batch_size), desc=f"Processing {set_name} batches"):
-        batch_end = min(batch_start + batch_size, len(valid_puzzles))
+    if total_examples_expected:
+        puzzle_identifiers_mm[:] = 0
+    puzzle_indices_mm[0] = 0
+    group_indices_mm[0] = 0
+
+    # Process in batches streaming results into memmaps
+    example_offset = 0
+    group_offset = 0
+
+    def _seq_to_numpy(seq):
+        arr = np.concatenate(seq).reshape(len(seq), -1)
+        assert np.all((arr >= 0) & (arr <= 9))
+        return arr + 1
+
+    for batch_start in tqdm(range(0, len(valid_puzzles), batch_size or 1), desc=f"Processing {set_name} batches"):
+        batch_end = min(batch_start + batch_size, len(valid_puzzles)) if batch_size else len(valid_puzzles)
         batch_puzzles = valid_puzzles[batch_start:batch_end]
 
-        results = {k: [] for k in ["inputs", "labels", "puzzle_identifiers", "puzzle_indices", "group_indices"]}
-        batch_example_id = 0
-        batch_puzzle_id = 0
-
-        results["puzzle_indices"].append(0)
-        results["group_indices"].append(0)
+        batch_inputs = []
+        batch_labels = []
+        batch_puzzle_counts = []
 
         for q, a in batch_puzzles:
-            # Convert to numpy arrays
             orig_inp = np.frombuffer(q.replace('.', '0').encode(), dtype=np.uint8).reshape(9, 9) - ord('0')
             orig_out = np.frombuffer(a.encode(), dtype=np.uint8).reshape(9, 9) - ord('0')
 
+            examples_for_puzzle = 0
             for aug_idx in range(1 + num_augments):
-                # First index is not augmented
                 if aug_idx == 0:
                     inp, out = orig_inp, orig_out
                 else:
                     inp, out = shuffle_sudoku(orig_inp, orig_out)
 
-                # Push puzzle (only single example)
-                results["inputs"].append(inp)
-                results["labels"].append(out)
-                batch_example_id += 1
-                batch_puzzle_id += 1
+                batch_inputs.append(inp)
+                batch_labels.append(out)
+                examples_for_puzzle += 1
 
-                results["puzzle_indices"].append(batch_example_id)
-                results["puzzle_identifiers"].append(0)
+            batch_puzzle_counts.append(examples_for_puzzle)
 
-            # Push group
-            results["group_indices"].append(batch_puzzle_id)
+        if not batch_inputs:
+            continue
 
-        # Convert batch to numpy arrays
-        def _seq_to_numpy(seq):
-            arr = np.concatenate(seq).reshape(len(seq), -1)
-            assert np.all((arr >= 0) & (arr <= 9))
-            return arr + 1
+        batch_inputs_arr = _seq_to_numpy(batch_inputs)
+        batch_labels_arr = _seq_to_numpy(batch_labels)
+        batch_example_count = batch_inputs_arr.shape[0]
 
-        batch_results = {
-            "inputs": _seq_to_numpy(results["inputs"]),
-            "labels": _seq_to_numpy(results["labels"]),
-            "group_indices": np.array(results["group_indices"], dtype=np.int32),
-            "puzzle_indices": np.array(results["puzzle_indices"], dtype=np.int32),
-            "puzzle_identifiers": np.array(results["puzzle_identifiers"], dtype=np.int32),
-        }
+        start = example_offset
+        stop = example_offset + batch_example_count
 
-        # Save batch to temporary file
-        batch_file = os.path.join(temp_dir, f"batch_{batch_start:06d}_{batch_end:06d}.npz")
-        np.savez(batch_file, **batch_results)
-        all_batch_files.append(batch_file)
+        inputs_mm[start:stop] = batch_inputs_arr
+        labels_mm[start:stop] = batch_labels_arr
+        puzzle_indices_mm[start + 1: stop + 1] = np.arange(start + 1, stop + 1, dtype=np.int32)
 
-        total_examples += len(batch_results["inputs"])
-        total_puzzles += len(batch_results["group_indices"]) - 1
+        running_examples = start
+        for puzzle_count in batch_puzzle_counts:
+            running_examples += puzzle_count
+            group_offset += 1
+            group_indices_mm[group_offset] = running_examples
 
-    # Concatenate all batches
-    print(f"Concatenating {len(all_batch_files)} batches for {set_name}...")
+        example_offset = stop
 
-    all_inputs = []
-    all_labels = []
-    all_puzzle_identifiers = []
-    all_puzzle_indices = []
-    all_group_indices = []
+    total_examples = example_offset
+    total_puzzles = group_offset
 
-    cumulative_examples = 0
-    cumulative_puzzles = 0
+    assert total_examples == total_examples_expected
+    assert total_puzzles == total_puzzles_expected
 
-    for batch_file in tqdm(all_batch_files, desc="Loading batches"):
-        batch_data = np.load(batch_file)
+    inputs_mm.flush()
+    labels_mm.flush()
+    puzzle_identifiers_mm.flush()
+    puzzle_indices_mm.flush()
+    group_indices_mm.flush()
 
-        all_inputs.append(batch_data["inputs"])
-        all_labels.append(batch_data["labels"])
-        all_puzzle_identifiers.append(batch_data["puzzle_identifiers"])
-        all_puzzle_indices.append(batch_data["puzzle_indices"] + cumulative_examples)
-        all_group_indices.append(batch_data["group_indices"] + cumulative_puzzles)
-
-        cumulative_examples += len(batch_data["inputs"])
-        cumulative_puzzles += len(batch_data["group_indices"]) - 1
-
-    # Concatenate final arrays
-    final_results = {
-        "inputs": np.concatenate(all_inputs),
-        "labels": np.concatenate(all_labels),
-        "puzzle_identifiers": np.concatenate(all_puzzle_identifiers),
-        "puzzle_indices": np.concatenate(all_puzzle_indices),
-        "group_indices": np.concatenate(all_group_indices),
-    }
-
-    # Fix the first elements to be 0
-    final_results["puzzle_indices"][0] = 0
-    final_results["group_indices"][0] = 0
+    del inputs_mm, labels_mm, puzzle_identifiers_mm, puzzle_indices_mm, group_indices_mm
 
     # Metadata
     metadata = PuzzleDatasetMetadata(
@@ -208,16 +215,9 @@ def convert_subset(set_name: str, config: DataProcessConfig):
     with open(os.path.join(save_dir, "dataset.json"), "w") as f:
         json.dump(metadata.model_dump(), f)
 
-    # Save data
-    for k, v in final_results.items():
-        np.save(os.path.join(save_dir, f"all__{k}.npy"), v)
-
     # Save IDs mapping (for visualization only)
     with open(os.path.join(config.output_dir, "identifiers.json"), "w") as f:
         json.dump(["<blank>"], f)
-
-    # Clean up temporary files
-    shutil.rmtree(temp_dir)
 
     print(f"Completed processing {set_name}: {total_puzzles} puzzles, {total_examples} examples")
 
