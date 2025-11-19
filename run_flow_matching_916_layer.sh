@@ -8,10 +8,6 @@ set -euo pipefail
 # increased dataset 10x, decreased augments 10x
 # python dataset/build_sudoku_dataset.py --output-dir data/sudoku-extreme-1k-aug-1000  --subsample-size 10000 --num-aug 100
 
-# TODO:
-  # 1. fix checkpoint path
-  # 2. verify venv/root
-
 # for sudoku
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(realpath "${SCRIPT_DIR}/TinyRecursiveModels")"
@@ -33,7 +29,7 @@ export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 
 torchrun --standalone --nproc_per_node=4 --master_port=29931 \
   train_flow_916_streaming.py \
-  --checkpoint-path "$ROOT/checkpoints/arc1concept/world_arcagi2_from_world_fresh/step_1452180" \
+  --checkpoint-path "$ROOT/checkpoints/step_32550_sudoku_epoch50k" \
   --data-dir "$ROOT/data/sudoku-extreme-1k-aug-1000" \
   --output-dir "$OUT_DIR" \
   --trm-global-batch-size 32 \
