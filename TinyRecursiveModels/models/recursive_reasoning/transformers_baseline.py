@@ -169,7 +169,8 @@ class Model_ACTV2_Inner(nn.Module):
         )
 
         # Initial states
-        self.H_init = nn.Buffer(
+        self.register_buffer(
+            "H_init",
             trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1),
             persistent=True,
         )

@@ -1,4 +1,7 @@
-"""Utilities for streaming TRM trajectories directly into diffusion training."""
+"""
+deprecated
+
+Utilities for streaming TRM trajectories directly into diffusion training."""
 
 from __future__ import annotations
 
@@ -26,7 +29,10 @@ def _load_arch_config() -> ArchConfig:
     """Load the TRM architecture config used for trajectory capture."""
     import yaml  # Local import to avoid global dependency when unused
 
-    with open("config/arch/trm.yaml", "r", encoding="utf-8") as handle:
+    from pathlib import Path
+
+    cfg_path = Path(__file__).resolve().parent / "config" / "arch" / "trm.yaml"
+    with open(cfg_path, "r", encoding="utf-8") as handle:
         arch_dict = yaml.safe_load(handle)
     loss_cfg = LossConfig(**arch_dict.pop("loss"))
     if isinstance(arch_dict.get("puzzle_emb_ndim"), str):

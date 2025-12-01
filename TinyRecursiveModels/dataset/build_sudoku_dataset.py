@@ -1,18 +1,15 @@
 from typing import Optional
+import argparse
 import os
 import csv
 import json
 import numpy as np
 
-from argdantic import ArgParser
 from pydantic import BaseModel
 from tqdm import tqdm
 from huggingface_hub import hf_hub_download
 
 from common import PuzzleDatasetMetadata
-
-
-cli = ArgParser()
 
 
 class DataProcessConfig(BaseModel):
@@ -146,7 +143,7 @@ def convert_subset(set_name: str, config: DataProcessConfig):
     os.makedirs(save_dir, exist_ok=True)
     
     with open(os.path.join(save_dir, "dataset.json"), "w") as f:
-        json.dump(metadata.model_dump(), f)
+        json.dump(metadata.dict(), f)
         
     # Save data
     for k, v in results.items():
@@ -156,12 +153,21 @@ def convert_subset(set_name: str, config: DataProcessConfig):
     with open(os.path.join(config.output_dir, "identifiers.json"), "w") as f:
         json.dump(["<blank>"], f)
 
+def _parse_args() -> DataProcessConfig:
+    parser = argparse.ArgumentParser(description="Build Sudoku Extreme dataset with optional augmentation.")
+    parser.add_argument("--source-repo", default="sapientinc/sudoku-extreme", help="HF repo for raw CSVs.")
+    parser.add_argument("--output-dir", default="data/sudoku-extreme-full", help="Output directory.")
+    parser.add_argument("--subsample-size", type=int, default=None, help="Subsample train size.")
+    parser.add_argument("--min-difficulty", type=int, default=None, help="Minimum rating to include.")
+    parser.add_argument("--num-aug", type=int, default=0, help="Number of augmentations per train example.")
+    args = parser.parse_args()
+    return DataProcessConfig(**vars(args))
 
-@cli.command(singleton=True)
+
 def preprocess_data(config: DataProcessConfig):
     convert_subset("train", config)
     convert_subset("test", config)
 
 
 if __name__ == "__main__":
-    cli()
+    preprocess_data(_parse_args())

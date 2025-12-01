@@ -1,0 +1,45 @@
+TinyRecursiveReasoningModel_ACTV1(
+  (inner): TinyRecursiveReasoningModel_ACTV1_Inner(
+    (embed_tokens): CastedEmbedding()
+    (lm_head): CastedLinear()
+    (q_head): CastedLinear()
+    (puzzle_emb): CastedSparseEmbedding()
+    (rotary_emb): RotaryEmbedding()
+    (L_level): TinyRecursiveReasoningModel_ACTV1ReasoningModule(
+      (layers): ModuleList(
+        (0-1): 2 x TinyRecursiveReasoningModel_ACTV1Block(
+          (self_attn): Attention(
+            (qkv_proj): CastedLinear()
+            (o_proj): CastedLinear()
+          )
+          (mlp): SwiGLU(
+            (gate_up_proj): CastedLinear()
+            (down_proj): CastedLinear()
+          )
+        )
+      )
+    )
+  )
+)
+Loading checkpoint TinyRecursiveModels/checkpoints/trm_sudoku_att_step21700.pt
+[eval] total=512 correct_batch=263
+[eval] total=1024 correct_batch=293
+[eval] total=1536 correct_batch=324
+[eval] total=2048 correct_batch=264
+[eval] total=2560 correct_batch=290
+[eval] total=3072 correct_batch=282
+[eval] total=3584 correct_batch=291
+[eval] total=4096 correct_batch=248
+[eval] total=4608 correct_batch=250
+[eval] total=5120 correct_batch=280
+[eval] total=5632 correct_batch=257
+[eval] total=6144 correct_batch=325
+[eval] total=6656 correct_batch=336
+[eval] total=7168 correct_batch=269
+[eval] total=7680 correct_batch=282
+[eval] total=8192 correct_batch=303
+[eval] total=8704 correct_batch=271
+[eval] total=9216 correct_batch=382
+[eval] total=9728 correct_batch=404
+[eval] total=10000 correct_batch=137
+[eval] puzzles=10000 pass@1=0.5751

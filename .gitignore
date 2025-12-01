@@ -218,4 +218,3 @@ world_assets/
 # Checkpoints: ignore everything except the trimmed weights export
 TinyRecursiveModels/checkpoints/
 # can remove if want to push weights
-*.pt 

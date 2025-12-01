@@ -17,6 +17,7 @@ IGNORE_LABEL_ID = -100
 class TinyRecursiveReasoningModel_ACTV1InnerCarry:
     z_H: torch.Tensor
     z_L: torch.Tensor
+    # NOTE: Additional fields may be added by streaming utilities; keep minimal here.
 
 
 @dataclass
@@ -150,8 +151,16 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         self.L_level = TinyRecursiveReasoningModel_ACTV1ReasoningModule(layers=[TinyRecursiveReasoningModel_ACTV1Block(self.config) for _i in range(self.config.L_layers)])
 
         # Initial states
-        self.H_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
-        self.L_init = nn.Buffer(trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1), persistent=True)
+        self.register_buffer(
+            "H_init",
+            trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1),
+            persistent=True,
+        )
+        self.register_buffer(
+            "L_init",
+            trunc_normal_init_(torch.empty(self.config.hidden_size, dtype=self.forward_dtype), std=1),
+            persistent=True,
+        )
 
         # Q head special init
         # Init Q to (almost) zero for faster learning during bootstrapping
@@ -244,6 +253,90 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         q_logits = self.q_head(z_H[:, 0]).to(torch.float32) # Q-head; uses the first puzzle_emb position
         return new_carry, output, (q_logits[..., 0], q_logits[..., 1]), trajectory
 
+    @torch.no_grad()
+    def streaming_forward(
+        self,
+        batch: Dict[str, torch.Tensor],
+        *,
+        steps: int,
+        noise_scale: float = 0.0,
+        collect_core_io: bool = False,
+        core_idxs: Optional[List[int]] = None,
+        replacements: Optional[Dict[int, callable]] = None,
+    ) -> Tuple[torch.Tensor, List[Tuple[int, torch.Tensor, torch.Tensor, torch.Tensor]]]:
+        """
+        Halting-free forward pass that decouples every TRM core call.
+
+        One halting step consists of H_cycles iterations; each H_cycle performs
+        L_cycles updates to z_L followed by one update to z_H. With the default
+        config (H_cycles=3, L_cycles=6) this is 21 cores per step, so `steps=4`
+        yields 84 distinct core indices. We inject Gaussian noise on the
+        post-injection activations (hidden + injection) before the shared
+        L-level block. Noise scale is a scalar derived from the RMS of the
+        entire core input (flattened). If `replacements` provides a callable for
+        a core_idx, that output is used instead. When `collect_core_io=True`,
+        records contain (core_idx, x_clean, noise, core_output) for the requested
+        core_idxs (defaults to [83], the final core in a 4-step run).
+        """
+        device = batch["inputs"].device
+        inputs = batch["inputs"]
+        puzzle_ids = batch["puzzle_identifiers"]
+        input_embeddings = self._input_embeddings(inputs, puzzle_ids)
+
+        # Init states
+        B = inputs.shape[0]
+        total_seq = input_embeddings.shape[1]
+        z_H = self.H_init.to(device).expand(B, total_seq, -1)
+        z_L = self.L_init.to(device).expand(B, total_seq, -1)
+
+        cos_sin = self.rotary_emb() if hasattr(self, "rotary_emb") else None
+        records: List[Tuple[int, torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        core_idx = 0
+        core_idx_set = None
+        if collect_core_io:
+            target_core_idxs = list(core_idxs) if core_idxs is not None else [83]
+            core_idx_set = set(target_core_idxs)
+
+        def _run_core(hidden_states: torch.Tensor, injection: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+            nonlocal core_idx
+            x_clean = hidden_states + injection
+            x_clean = x_clean.to(self.forward_dtype)
+
+            if noise_scale > 0:
+                # Per-sample scalar RMS over the full core input (flattened).
+                rms = torch.sqrt(torch.mean(x_clean.to(torch.float32) ** 2, dim=(1, 2)) + 1e-6)  # [B]
+                noise = torch.randn_like(x_clean) * (noise_scale * rms.view(-1, 1, 1))
+                x_noisy = x_clean + noise
+            else:
+                noise = torch.zeros_like(x_clean)
+                x_noisy = x_clean
+
+            if replacements is not None and core_idx in replacements:
+                out = replacements[core_idx](x_clean, noise)
+            else:
+                hidden_states = x_noisy
+                for layer in self.L_level.layers:
+                    hidden_states = layer(cos_sin=cos_sin, hidden_states=hidden_states)
+                out = hidden_states
+
+            if core_idx_set is not None and core_idx in core_idx_set:
+                # Store core_idx, clean input, noise used, and output.
+                records.append((core_idx, x_clean.detach(), noise.detach(), out.detach()))
+
+            core_idx += 1
+            return out, None
+
+        # Fixed halting steps; ignore ACT. Each halting step runs H_cycles blocks,
+        # each of which runs L_cycles updates to z_L then one update to z_H.
+        for _step in range(steps):
+            for _h in range(self.config.H_cycles):
+                for _l in range(self.config.L_cycles):
+                    z_L, _ = _run_core(z_L, z_H + input_embeddings)
+                z_H, _ = _run_core(z_H, z_L)
+
+        logits = self.lm_head(z_H)[:, self.puzzle_emb_len:]
+        return logits, records
+
 
 class TinyRecursiveReasoningModel_ACTV1(nn.Module):
     """ACT wrapper."""
@@ -332,3 +425,26 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
                     outputs["target_q_continue"] = torch.sigmoid(torch.where(is_last_step, next_q_halt_logits, torch.maximum(next_q_halt_logits, next_q_continue_logits)))
 
         return TinyRecursiveReasoningModel_ACTV1Carry(new_inner_carry, new_steps, halted, new_current_data), outputs
+
+    @torch.no_grad()
+    def streaming_forward(
+        self,
+        batch: Dict[str, torch.Tensor],
+        *,
+        steps: int,
+        noise_scale: float = 0.0,
+        collect_core_io: bool = False,
+        core_idxs: Optional[List[int]] = None,
+        replacements: Optional[Dict[int, callable]] = None,
+    ) -> Tuple[torch.Tensor, List[Tuple[int, torch.Tensor, torch.Tensor, torch.Tensor]]]:
+        """
+        Convenience wrapper around inner.streaming_forward.
+        """
+        return self.inner.streaming_forward(
+            batch=batch,
+            steps=steps,
+            noise_scale=noise_scale,
+            collect_core_io=collect_core_io,
+            core_idxs=core_idxs,
+            replacements=replacements,
+        )
