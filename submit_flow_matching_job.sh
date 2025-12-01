@@ -1,16 +1,17 @@
 #!/bin/bash
-#SBATCH -p sched_mit_kburdge_r8          # your group partition
-#SBATCH --job-name=sudoku_flow           # name for the job
-#SBATCH --gres=gpu:4                     # 4 GPUs (matches CUDA_VISIBLE_DEVICES=0,1,2,3)
-#SBATCH --ntasks=1                       # one main process (torchrun handles ranks)
-#SBATCH --cpus-per-task=32               # number of CPU cores
-#SBATCH --mem=128G                       # RAM (tune as needed)
-#SBATCH --time=2-00:00:00                # up to 2 days (format: D-HH:MM:SS)
-#SBATCH --output=slurm-%j.out            # Slurm log; your script also logs to $LOG
+#SBATCH -p mit_preemptable                
+#SBATCH --job-name=sudoku_flow
+#SBATCH --gres=gpu:4                     # request 4 GPUs (all H200s on the same node)
+#SBATCH --constraint=h200                # *** H200 GPUs only ***
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --time=5:45:00                   # mit_normal_gpu max is 6 hours
+#SBATCH --output=slurm-%j.out
 
-# If you need modules for CUDA, Python, etc., load them here, e.g.:
+# Load modules if needed:
 # module load miniforge
 # module load cuda/12.0
 
-# Run your training script
+# Run your script
 bash TinyRecursiveModels/run_flow_matching_916_layer.sh
