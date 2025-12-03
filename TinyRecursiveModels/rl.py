@@ -444,7 +444,7 @@ def main(args: argparse.Namespace) -> None:
         assert len(base_records) == 1
         for idx, ((_, x_clean, post_processed_noise, out), (_, _, _, base_out)) in enumerate(zip(records, base_records)):
             rms = torch.sqrt(torch.mean(out.to(torch.float32) ** 2, dim=(1, 2)) + 1e-6)
-            std_dev = args.noise_scale * rms.view(-1, 1) # [B, 1]
+            std_dev = args.noise_scale * rms.view(-1) # [B]
             out = out.reshape(out.shape[0], -1)
             base_out = base_out.reshape(base_out.shape[0], -1).repeat_interleave(args.g, dim=0)
             logprob = -((out - base_out)**2).mean(dim=1) / (2 * std_dev**2)
@@ -462,7 +462,7 @@ def main(args: argparse.Namespace) -> None:
         one_opt.step()
 
         global_step += 1
-        samples_seen += batch["inputs"].shape[0] * args.g
+        samples_seen += batch["inputs"].shape[0]
         step_time = time.time() - step_start_time
         
         # Accumulate metrics
@@ -540,7 +540,6 @@ def main(args: argparse.Namespace) -> None:
                     wall_time=time.time() - start_time,
                     pass_at_1=pass_at_1,
                     eval_puzzles=args.eval_puzzles,
-                    noise_scale=args.noise_scale,
                 )
                 logger.log_eval(eval_metrics)
                 print(f"[eval] step={global_step} pass@1={pass_at_1:.4f}")
