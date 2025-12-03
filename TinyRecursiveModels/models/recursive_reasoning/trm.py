@@ -347,7 +347,8 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
         core_idxs: Optional[List[int]] = None, # this is the list of cores that we're injecting noise into
         replacements: Optional[Dict[int, callable]] = None,
         fixed_noise_seeds: Optional[Dict[int, torch.Tensor]] = None,
-        post_process_noise: bool = True, # do I add post processed noise to the things in the core_idxs
+        expand_fixed_noise: Optional[int] = None, # must the fixed noise be expanded by this factor?
+        post_process_noise_scale: Optional[float] = None, # do I add post processed noise to the things in the core_idxs
     ) -> Tuple[torch.Tensor, List[Tuple[int, torch.Tensor, torch.Tensor, torch.Tensor]]]:
         """
         Halting-free forward pass that decouples every TRM core call.
@@ -391,8 +392,16 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
                 # Per-sample scalar RMS over the full core input (flattened).
                 rms = torch.sqrt(torch.mean(x_clean.to(torch.float32) ** 2, dim=(1, 2)) + 1e-6)  # [B]
                 if fixed_noise_seeds is not None and core_idx in fixed_noise_seeds:
-                    noise = torch.empty_like(x_clean).normal_(generator=torch.Generator(device=x_clean.device).manual_seed(fixed_noise_seeds[core_idx].item()))
-                    # noise = torch.randn_like(x_clean, generator=torch.Generator().manual_seed(fixed_noise_seeds[core_idx].item()))
+                    # if the first thing is [B*G, ...], then we want to only sample [B, ...] and then expand the first dimension by G
+                    wanted_shape = list(x_clean.shape)
+                    if expand_fixed_noise is not None:
+                        wanted_shape[0] //= expand_fixed_noise
+                    # print(f"wanted_shape: {wanted_shape}")
+                    noise = torch.empty(*wanted_shape, dtype=x_clean.dtype, device=x_clean.device).normal_(generator=torch.Generator(device=x_clean.device).manual_seed(fixed_noise_seeds[core_idx].item()))
+                    if expand_fixed_noise is not None:
+                        noise = noise.repeat_interleave(expand_fixed_noise, dim=0)
+                    assert noise.shape == x_clean.shape
+                    # noise = torch.empty_like(x_clean).normal_(generator=torch.Generator(device=x_clean.device).manual_seed(fixed_noise_seeds[core_idx].item()))
                 else:
                     noise = torch.randn_like(x_clean)
                 noise = noise * (noise_scale * rms.view(-1, 1, 1))
@@ -411,9 +420,9 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
 
             if core_idx_set is not None and core_idx in core_idx_set:
                 # Store core_idx, clean input, **POST PROCESSED** noise used, and output.
-                if post_process_noise:
+                if post_process_noise_scale is not None:
                     rms = torch.sqrt(torch.mean(out.to(torch.float32) ** 2, dim=(1, 2)) + 1e-6)
-                    post_processed_noise = torch.randn_like(noise) * (noise_scale * rms.view(-1, 1, 1))
+                    post_processed_noise = torch.randn_like(noise) * (post_process_noise_scale * rms.view(-1, 1, 1))
                     out += post_processed_noise
                     records.append((core_idx, x_clean, post_processed_noise, out))
                 else:
@@ -559,7 +568,8 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
         core_idxs: Optional[List[int]] = None,
         replacements: Optional[Dict[int, callable]] = None,
         fixed_noise_seeds: Optional[Dict[int, torch.Tensor]] = None,
-        post_process_noise: bool = True,
+        expand_fixed_noise: Optional[int] = None, # must the fixed noise be expanded by this factor?
+        post_process_noise_scale: Optional[float] = None,
     ) -> Tuple[torch.Tensor, List[Tuple[int, torch.Tensor, torch.Tensor, torch.Tensor]]]:
         return self.inner.streaming_forward_for_rl(
             batch=batch,
@@ -569,5 +579,6 @@ class TinyRecursiveReasoningModel_ACTV1(nn.Module):
             core_idxs=core_idxs,
             replacements=replacements,
             fixed_noise_seeds=fixed_noise_seeds,
-            post_process_noise=post_process_noise,
+            expand_fixed_noise=expand_fixed_noise,
+            post_process_noise_scale=post_process_noise_scale,
         )

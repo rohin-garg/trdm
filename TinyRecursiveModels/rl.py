@@ -412,7 +412,8 @@ def main(args: argparse.Namespace) -> None:
                 core_idxs=[core_idx],
                 replacements=replacements,
                 fixed_noise_seeds=fixed_noise_seeds,
-                post_process_noise=True,
+                expand_fixed_noise=args.g,
+                post_process_noise_scale=args.post_process_noise_scale,
             )
 
         _, base_records = teacher.streaming_forward_for_rl( # no **postprocessed** noise records
@@ -423,7 +424,7 @@ def main(args: argparse.Namespace) -> None:
             core_idxs=[core_idx],
             replacements=replacements,
             fixed_noise_seeds=fixed_noise_seeds,
-            post_process_noise=False,
+            post_process_noise_scale=None,
         )
 
         
@@ -438,6 +439,7 @@ def main(args: argparse.Namespace) -> None:
             adv_min = advantage.min().item()
             adv_max = advantage.max().item()
             positive_adv_frac = (advantage > 0).float().mean().item()
+            print("frac of positive ROW advantages: ", (success.std(dim=1).unsqueeze(1) > 0).float().mean().item())
 
         loss = torch.tensor(0.0, requires_grad=True, device=device)
         assert len(records) == 1
@@ -447,7 +449,9 @@ def main(args: argparse.Namespace) -> None:
             std_dev = args.noise_scale * rms.view(-1) # [B]
             out = out.reshape(out.shape[0], -1)
             base_out = base_out.reshape(base_out.shape[0], -1).repeat_interleave(args.g, dim=0)
+            assert out.shape == base_out.shape
             logprob = -((out - base_out)**2).mean(dim=1) / (2 * std_dev**2)
+            print(logprob.min().item(), (logprob * advantage).mean().item(), (logprob * advantage).std().item())
             loss = loss + (logprob * advantage).mean()
 
         loss = -loss / len(records)
@@ -593,6 +597,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-grad-norm", type=float, default=1.0)
     p.add_argument("--steps", type=int, default=4, help="Number of halting steps in teacher streaming forward")
     p.add_argument("--noise-scale", type=float, default=0.02, help="RMS-scaled noise std for teacher streaming_forward")
+    p.add_argument("--post-process-noise-scale", type=float, default=0.02, help="RMS-scaled noise std for post-processed noise")
     p.add_argument("--batch-size", type=int, default=32, help="Per-GPU batch size (each sample generates g completions)")
     p.add_argument("--max-steps", type=int, default=100_000, help="Maximum training steps")
     

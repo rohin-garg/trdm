@@ -29,4 +29,5 @@ torchrun \
     --eval-interval 1000 \
     --eval-puzzles 2048 \
     --noise-scale 0.02 \
-    --steps 4
+    --steps 4 \
+    --post-process-noise-scale 0.5
