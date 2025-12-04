@@ -1,0 +1,229 @@
+TinyRecursiveReasoningModel_ACTV1(
+  (inner): TinyRecursiveReasoningModel_ACTV1_Inner(
+    (embed_tokens): CastedEmbedding()
+    (lm_head): CastedLinear()
+    (q_head): CastedLinear()
+    (puzzle_emb): CastedSparseEmbedding()
+    (rotary_emb): RotaryEmbedding()
+    (L_level): TinyRecursiveReasoningModel_ACTV1ReasoningModule(
+      (layers): ModuleList(
+        (0-1): 2 x TinyRecursiveReasoningModel_ACTV1Block(
+          (self_attn): Attention(
+            (qkv_proj): CastedLinear()
+            (o_proj): CastedLinear()
+          )
+          (mlp): SwiGLU(
+            (gate_up_proj): CastedLinear()
+            (down_proj): CastedLinear()
+          )
+        )
+      )
+    )
+  )
+)
+Loading checkpoint /orcd/pool/008/lerchen/trdm/TinyRecursiveModels/checkpoints/trm_sudoku_att_step21700.pt
+[info] training shared one-step for all cores; num_cores=84
+[info] buffering 100 batches for fixed-set training
+[eval] running initial evaluation at step 0...
+[eval] step=0 pass@1=0.5747
+[info] starting training loop
+[train] step=10 samples=5120 loss=-0.0038 success=0.637 grad=3.50 adv=-0.000±0.362 t=3.93s
+[train] step=20 samples=10240 loss=0.0165 success=0.592 grad=3.39 adv=-0.000±0.334 t=1.90s
+[train] step=30 samples=15360 loss=0.0047 success=0.590 grad=3.28 adv=0.000±0.328 t=1.93s
+[train] step=40 samples=20480 loss=0.0118 success=0.694 grad=3.26 adv=0.000±0.322 t=1.95s
+[train] step=50 samples=25600 loss=0.0110 success=0.604 grad=3.61 adv=-0.000±0.376 t=1.89s
+[train] step=60 samples=30720 loss=-0.0005 success=0.557 grad=3.05 adv=-0.000±0.316 t=1.92s
+[train] step=70 samples=35840 loss=0.0031 success=0.602 grad=3.94 adv=-0.000±0.383 t=1.94s
+[train] step=80 samples=40960 loss=-0.0092 success=0.546 grad=4.20 adv=-0.000±0.439 t=1.90s
+[train] step=90 samples=46080 loss=-0.0081 success=0.686 grad=3.10 adv=-0.000±0.316 t=1.93s
+[train] step=100 samples=51200 loss=-0.0025 success=0.515 grad=3.33 adv=-0.000±0.324 t=1.88s
+[train] step=110 samples=56320 loss=-0.0024 success=0.646 grad=4.00 adv=-0.000±0.400 t=1.94s
+[train] step=120 samples=61440 loss=0.0104 success=0.589 grad=1.60 adv=0.000±0.163 t=1.84s
+[train] step=130 samples=66560 loss=-0.0117 success=0.575 grad=3.85 adv=-0.000±0.363 t=1.91s
+[train] step=140 samples=71680 loss=0.0089 success=0.714 grad=1.99 adv=0.000±0.210 t=1.85s
+[train] step=150 samples=76800 loss=-0.0080 success=0.593 grad=4.05 adv=-0.000±0.389 t=1.96s
+[train] step=160 samples=81920 loss=-0.0005 success=0.568 grad=3.77 adv=-0.000±0.372 t=1.96s
+[train] step=170 samples=87040 loss=0.0097 success=0.599 grad=4.19 adv=-0.000±0.419 t=1.92s
+[train] step=180 samples=92160 loss=-0.0040 success=0.554 grad=4.14 adv=-0.000±0.437 t=1.96s
+[train] step=190 samples=97280 loss=0.0021 success=0.694 grad=3.49 adv=0.000±0.412 t=1.93s
+[train] step=200 samples=102400 loss=0.0097 success=0.523 grad=4.58 adv=-0.000±0.437 t=1.93s
+[eval] running evaluation at step 200...
+[eval] step=200 pass@1=0.5156
+[train] step=210 samples=107520 loss=0.0043 success=0.658 grad=4.72 adv=-0.000±0.446 t=3.69s
+[train] step=220 samples=112640 loss=0.0111 success=0.592 grad=3.16 adv=-0.000±0.302 t=1.93s
+[train] step=230 samples=117760 loss=-0.0190 success=0.587 grad=4.20 adv=-0.000±0.441 t=1.97s
+[train] step=240 samples=122880 loss=0.0058 success=0.695 grad=2.96 adv=-0.000±0.314 t=1.91s
+[train] step=250 samples=128000 loss=-0.0078 success=0.595 grad=2.90 adv=-0.000±0.282 t=1.95s
+[train] step=260 samples=133120 loss=0.0140 success=0.548 grad=3.86 adv=-0.000±0.384 t=1.93s
+[train] step=270 samples=138240 loss=-0.0151 success=0.592 grad=4.32 adv=-0.000±0.467 t=1.92s
+[train] step=280 samples=143360 loss=0.0069 success=0.539 grad=4.54 adv=-0.000±0.441 t=1.95s
+[train] step=290 samples=148480 loss=-0.0102 success=0.698 grad=1.77 adv=-0.000±0.192 t=1.89s
+[train] step=300 samples=153600 loss=-0.0007 success=0.512 grad=4.27 adv=-0.000±0.403 t=1.94s
+[train] step=310 samples=158720 loss=0.0046 success=0.635 grad=2.66 adv=-0.000±0.244 t=1.89s
+[train] step=320 samples=163840 loss=-0.0030 success=0.587 grad=1.96 adv=-0.000±0.205 t=1.96s
+[train] step=330 samples=168960 loss=0.0066 success=0.573 grad=3.81 adv=-0.000±0.379 t=1.93s
+[train] step=340 samples=174080 loss=0.0023 success=0.709 grad=1.54 adv=-0.000±0.199 t=1.88s
+[train] step=350 samples=179200 loss=-0.0069 success=0.618 grad=3.16 adv=0.000±0.313 t=1.93s
+[train] step=360 samples=184320 loss=-0.0076 success=0.542 grad=3.42 adv=-0.000±0.413 t=1.86s
+[train] step=370 samples=189440 loss=0.0087 success=0.611 grad=4.64 adv=-0.000±0.460 t=1.98s
+[train] step=380 samples=194560 loss=-0.0017 success=0.561 grad=4.53 adv=-0.000±0.474 t=1.94s
+[train] step=390 samples=199680 loss=0.0044 success=0.706 grad=4.39 adv=-0.000±0.439 t=1.93s
+[train] step=400 samples=204800 loss=0.0083 success=0.511 grad=3.12 adv=-0.000±0.347 t=1.90s
+[eval] running evaluation at step 400...
+[eval] step=400 pass@1=0.3877
+[train] step=410 samples=209920 loss=0.0049 success=0.645 grad=2.19 adv=-0.000±0.241 t=3.56s
+[train] step=420 samples=215040 loss=0.0031 success=0.608 grad=3.67 adv=-0.000±0.373 t=1.96s
+[train] step=430 samples=220160 loss=0.0018 success=0.566 grad=3.65 adv=-0.000±0.348 t=1.92s
+[train] step=440 samples=225280 loss=-0.0109 success=0.705 grad=2.91 adv=-0.000±0.330 t=1.93s
+[train] step=450 samples=230400 loss=0.0136 success=0.600 grad=2.95 adv=-0.000±0.288 t=1.91s
+[train] step=460 samples=235520 loss=0.0134 success=0.578 grad=3.63 adv=-0.000±0.394 t=1.93s
+[train] step=470 samples=240640 loss=0.0020 success=0.617 grad=3.56 adv=0.000±0.361 t=1.96s
+[train] step=480 samples=245760 loss=0.0085 success=0.564 grad=4.73 adv=-0.000±0.461 t=1.97s
+[train] step=490 samples=250880 loss=0.0156 success=0.690 grad=3.31 adv=0.000±0.359 t=1.93s
+[train] step=500 samples=256000 loss=0.0013 success=0.521 grad=3.73 adv=-0.000±0.407 t=1.97s
+[checkpoint] saved analysis/rl_main_run/step_500.pt
+[checkpoint] saved analysis/rl_main_run/latest.pt
+[train] step=510 samples=261120 loss=-0.0057 success=0.667 grad=2.64 adv=0.000±0.246 t=1.96s
+[train] step=520 samples=266240 loss=0.0101 success=0.589 grad=2.37 adv=-0.000±0.263 t=1.92s
+[train] step=530 samples=271360 loss=0.0205 success=0.574 grad=3.93 adv=-0.000±0.451 t=1.91s
+[train] step=540 samples=276480 loss=-0.0171 success=0.705 grad=2.90 adv=0.000±0.320 t=1.92s
+[train] step=550 samples=281600 loss=0.0025 success=0.607 grad=3.10 adv=-0.000±0.342 t=1.96s
+[train] step=560 samples=286720 loss=-0.0021 success=0.538 grad=2.89 adv=-0.000±0.347 t=1.92s
+[train] step=570 samples=291840 loss=-0.0216 success=0.589 grad=3.64 adv=-0.000±0.391 t=1.93s
+[train] step=580 samples=296960 loss=0.0140 success=0.555 grad=2.19 adv=-0.000±0.208 t=1.85s
+[train] step=590 samples=302080 loss=0.0002 success=0.683 grad=2.62 adv=-0.000±0.240 t=1.90s
+[train] step=600 samples=307200 loss=0.0068 success=0.524 grad=4.60 adv=-0.000±0.471 t=1.95s
+[eval] running evaluation at step 600...
+[eval] step=600 pass@1=0.2900
+[train] step=610 samples=312320 loss=0.0003 success=0.655 grad=3.79 adv=-0.000±0.383 t=3.63s
+[train] step=620 samples=317440 loss=-0.0053 success=0.589 grad=2.81 adv=-0.000±0.318 t=1.91s
+[train] step=630 samples=322560 loss=-0.0120 success=0.585 grad=3.18 adv=-0.000±0.354 t=1.89s
+[train] step=640 samples=327680 loss=0.0146 success=0.698 grad=3.14 adv=0.000±0.299 t=1.91s
+[train] step=650 samples=332800 loss=-0.0038 success=0.589 grad=1.42 adv=-0.000±0.199 t=1.89s
+[train] step=660 samples=337920 loss=0.0002 success=0.551 grad=3.50 adv=-0.000±0.417 t=1.93s
+[train] step=670 samples=343040 loss=-0.0123 success=0.588 grad=3.39 adv=-0.000±0.352 t=1.94s
+[train] step=680 samples=348160 loss=0.0282 success=0.544 grad=4.83 adv=-0.000±0.449 t=1.94s
+[train] step=690 samples=353280 loss=-0.0260 success=0.699 grad=4.43 adv=-0.000±0.490 t=1.95s
+[train] step=700 samples=358400 loss=0.0137 success=0.528 grad=2.96 adv=-0.000±0.316 t=1.87s
+[train] step=710 samples=363520 loss=-0.0092 success=0.654 grad=3.30 adv=-0.000±0.339 t=1.94s
+[train] step=720 samples=368640 loss=-0.0004 success=0.582 grad=2.53 adv=-0.000±0.266 t=1.96s
+[train] step=730 samples=373760 loss=-0.0087 success=0.578 grad=4.44 adv=-0.000±0.490 t=1.97s
+[train] step=740 samples=378880 loss=0.0073 success=0.716 grad=3.44 adv=0.000±0.350 t=1.97s
+[train] step=750 samples=384000 loss=-0.0053 success=0.589 grad=2.89 adv=-0.000±0.262 t=1.96s
+[train] step=760 samples=389120 loss=-0.0035 success=0.548 grad=4.02 adv=-0.000±0.384 t=1.93s
+[train] step=770 samples=394240 loss=-0.0141 success=0.592 grad=3.34 adv=-0.000±0.341 t=1.92s
+[train] step=780 samples=399360 loss=-0.0107 success=0.553 grad=3.91 adv=-0.000±0.407 t=1.91s
+[train] step=790 samples=404480 loss=-0.0121 success=0.700 grad=3.86 adv=-0.000±0.372 t=1.92s
+[train] step=800 samples=409600 loss=-0.0078 success=0.514 grad=3.02 adv=-0.000±0.348 t=1.87s
+[eval] running evaluation at step 800...
+[eval] step=800 pass@1=0.2637
+[train] step=810 samples=414720 loss=-0.0098 success=0.653 grad=3.97 adv=-0.000±0.395 t=3.65s
+[train] step=820 samples=419840 loss=-0.0072 success=0.595 grad=3.76 adv=-0.000±0.404 t=1.92s
+[train] step=830 samples=424960 loss=-0.0117 success=0.547 grad=2.89 adv=-0.000±0.369 t=1.92s
+[train] step=840 samples=430080 loss=-0.0081 success=0.707 grad=2.50 adv=-0.000±0.296 t=1.90s
+[train] step=850 samples=435200 loss=-0.0097 success=0.591 grad=3.39 adv=-0.000±0.309 t=1.91s
+[train] step=860 samples=440320 loss=-0.0109 success=0.568 grad=3.31 adv=-0.000±0.298 t=1.94s
+[train] step=870 samples=445440 loss=-0.0008 success=0.610 grad=3.19 adv=0.000±0.330 t=1.88s
+[train] step=880 samples=450560 loss=-0.0207 success=0.550 grad=4.26 adv=-0.000±0.455 t=1.92s
+[train] step=890 samples=455680 loss=0.0115 success=0.709 grad=3.17 adv=0.000±0.303 t=1.91s
+[train] step=900 samples=460800 loss=-0.0005 success=0.520 grad=3.87 adv=-0.000±0.407 t=1.92s
+[train] step=910 samples=465920 loss=-0.0032 success=0.651 grad=3.24 adv=-0.000±0.349 t=1.90s
+[train] step=920 samples=471040 loss=0.0091 success=0.597 grad=4.17 adv=-0.000±0.398 t=1.97s
+[train] step=930 samples=476160 loss=0.0037 success=0.567 grad=4.02 adv=-0.000±0.397 t=1.93s
+[train] step=940 samples=481280 loss=0.0029 success=0.703 grad=2.65 adv=0.000±0.289 t=1.93s
+[train] step=950 samples=486400 loss=0.0129 success=0.600 grad=2.73 adv=-0.000±0.297 t=1.90s
+[train] step=960 samples=491520 loss=-0.0036 success=0.552 grad=4.48 adv=-0.000±0.417 t=1.94s
+[train] step=970 samples=496640 loss=-0.0070 success=0.604 grad=2.06 adv=-0.000±0.193 t=1.87s
+[train] step=980 samples=501760 loss=0.0072 success=0.552 grad=4.11 adv=-0.000±0.475 t=1.94s
+[train] step=990 samples=506880 loss=0.0027 success=0.694 grad=3.10 adv=-0.000±0.292 t=1.92s
+[train] step=1000 samples=512000 loss=-0.0006 success=0.524 grad=3.98 adv=-0.000±0.390 t=1.92s
+[eval] running evaluation at step 1000...
+[eval] step=1000 pass@1=0.1250
+[checkpoint] saved analysis/rl_main_run/step_1000.pt
+[checkpoint] saved analysis/rl_main_run/latest.pt
+[train] step=1010 samples=517120 loss=0.0223 success=0.652 grad=3.28 adv=-0.000±0.373 t=3.67s
+[train] step=1020 samples=522240 loss=-0.0093 success=0.581 grad=3.99 adv=-0.000±0.386 t=1.96s
+[train] step=1030 samples=527360 loss=0.0126 success=0.570 grad=3.68 adv=0.000±0.365 t=1.93s
+[train] step=1040 samples=532480 loss=-0.0014 success=0.724 grad=1.49 adv=-0.000±0.162 t=1.93s
+[train] step=1050 samples=537600 loss=0.0089 success=0.602 grad=3.64 adv=0.000±0.345 t=1.98s
+[train] step=1060 samples=542720 loss=-0.0065 success=0.564 grad=3.37 adv=-0.000±0.345 t=1.94s
+[train] step=1070 samples=547840 loss=-0.0080 success=0.584 grad=3.47 adv=-0.000±0.348 t=1.93s
+[train] step=1080 samples=552960 loss=-0.0020 success=0.555 grad=4.27 adv=-0.000±0.413 t=1.93s
+[train] step=1090 samples=558080 loss=-0.0092 success=0.697 grad=2.55 adv=-0.000±0.264 t=1.90s
+[train] step=1100 samples=563200 loss=0.0027 success=0.512 grad=4.88 adv=-0.000±0.454 t=1.96s
+[train] step=1110 samples=568320 loss=-0.0070 success=0.668 grad=3.13 adv=-0.000±0.321 t=1.94s
+[train] step=1120 samples=573440 loss=-0.0056 success=0.588 grad=3.09 adv=-0.000±0.277 t=1.92s
+[train] step=1130 samples=578560 loss=-0.0115 success=0.576 grad=3.55 adv=-0.000±0.371 t=1.90s
+[train] step=1140 samples=583680 loss=0.0085 success=0.691 grad=2.60 adv=0.000±0.276 t=1.90s
+[train] step=1150 samples=588800 loss=0.0072 success=0.593 grad=3.60 adv=-0.000±0.373 t=1.96s
+[train] step=1160 samples=593920 loss=0.0007 success=0.550 grad=3.60 adv=-0.000±0.361 t=1.90s
+[train] step=1170 samples=599040 loss=0.0102 success=0.596 grad=3.06 adv=-0.000±0.345 t=1.94s
+[train] step=1180 samples=604160 loss=0.0108 success=0.546 grad=3.54 adv=0.000±0.348 t=1.90s
+[train] step=1190 samples=609280 loss=0.0127 success=0.698 grad=3.09 adv=-0.000±0.317 t=1.97s
+[train] step=1200 samples=614400 loss=-0.0081 success=0.504 grad=4.33 adv=-0.000±0.425 t=1.94s
+[eval] running evaluation at step 1200...
+[eval] step=1200 pass@1=0.0259
+[train] step=1210 samples=619520 loss=-0.0028 success=0.659 grad=3.20 adv=-0.000±0.332 t=3.62s
+[train] step=1220 samples=624640 loss=0.0013 success=0.570 grad=2.58 adv=-0.000±0.264 t=1.88s
+[train] step=1230 samples=629760 loss=0.0031 success=0.582 grad=5.04 adv=-0.000±0.498 t=2.00s
+[train] step=1240 samples=634880 loss=0.0116 success=0.718 grad=2.80 adv=0.000±0.329 t=1.98s
+[train] step=1250 samples=640000 loss=-0.0050 success=0.588 grad=3.21 adv=-0.000±0.351 t=1.90s
+[train] step=1260 samples=645120 loss=0.0053 success=0.546 grad=3.67 adv=-0.000±0.384 t=1.91s
+[train] step=1270 samples=650240 loss=0.0202 success=0.626 grad=4.31 adv=-0.000±0.390 t=1.95s
+[train] step=1280 samples=655360 loss=-0.0120 success=0.532 grad=4.57 adv=-0.000±0.422 t=1.92s
+[train] step=1290 samples=660480 loss=0.0064 success=0.703 grad=3.27 adv=-0.000±0.309 t=1.90s
+[train] step=1300 samples=665600 loss=-0.0027 success=0.523 grad=3.22 adv=-0.000±0.321 t=1.91s
+[train] step=1310 samples=670720 loss=-0.0052 success=0.667 grad=1.96 adv=-0.000±0.224 t=1.88s
+[train] step=1320 samples=675840 loss=-0.0144 success=0.582 grad=2.84 adv=-0.000±0.259 t=1.91s
+[train] step=1330 samples=680960 loss=0.0042 success=0.579 grad=3.69 adv=-0.000±0.388 t=1.91s
+[train] step=1340 samples=686080 loss=0.0025 success=0.697 grad=3.18 adv=0.000±0.328 t=1.93s
+[train] step=1350 samples=691200 loss=-0.0138 success=0.599 grad=3.57 adv=-0.000±0.366 t=1.96s
+[train] step=1360 samples=696320 loss=-0.0026 success=0.570 grad=3.12 adv=-0.000±0.345 t=1.88s
+[train] step=1370 samples=701440 loss=-0.0027 success=0.601 grad=4.15 adv=-0.000±0.385 t=1.92s
+[train] step=1380 samples=706560 loss=0.0079 success=0.538 grad=4.77 adv=-0.000±0.471 t=1.95s
+[train] step=1390 samples=711680 loss=-0.0004 success=0.694 grad=3.65 adv=-0.000±0.391 t=1.92s
+[train] step=1400 samples=716800 loss=-0.0205 success=0.532 grad=3.46 adv=-0.000±0.344 t=1.89s
+[eval] running evaluation at step 1400...
+[eval] step=1400 pass@1=0.0000
+[train] step=1410 samples=721920 loss=-0.0028 success=0.643 grad=3.63 adv=-0.000±0.379 t=3.61s
+[train] step=1420 samples=727040 loss=0.0052 success=0.586 grad=3.64 adv=-0.000±0.343 t=1.94s
+[train] step=1430 samples=732160 loss=0.0142 success=0.577 grad=3.34 adv=-0.000±0.352 t=1.92s
+[train] step=1440 samples=737280 loss=-0.0012 success=0.718 grad=2.88 adv=0.000±0.300 t=1.93s
+[train] step=1450 samples=742400 loss=-0.0173 success=0.611 grad=3.89 adv=-0.000±0.364 t=1.95s
+[train] step=1460 samples=747520 loss=0.0079 success=0.562 grad=4.42 adv=-0.000±0.418 t=1.95s
+[train] step=1470 samples=752640 loss=0.0115 success=0.605 grad=2.47 adv=-0.000±0.245 t=1.88s
+[train] step=1480 samples=757760 loss=0.0212 success=0.550 grad=3.75 adv=-0.000±0.364 t=1.95s
+[train] step=1490 samples=762880 loss=-0.0146 success=0.696 grad=3.28 adv=-0.000±0.320 t=1.93s
+[train] step=1500 samples=768000 loss=-0.0057 success=0.522 grad=3.21 adv=-0.000±0.327 t=1.94s
+[checkpoint] saved analysis/rl_main_run/step_1500.pt
+[checkpoint] saved analysis/rl_main_run/latest.pt
+[train] step=1510 samples=773120 loss=-0.0038 success=0.654 grad=3.77 adv=-0.000±0.361 t=2.01s
+[train] step=1520 samples=778240 loss=0.0051 success=0.594 grad=3.94 adv=-0.000±0.393 t=1.96s
+[train] step=1530 samples=783360 loss=-0.0040 success=0.579 grad=4.51 adv=-0.000±0.445 t=1.97s
+[train] step=1540 samples=788480 loss=0.0070 success=0.712 grad=3.16 adv=0.000±0.372 t=1.96s
+[train] step=1550 samples=793600 loss=-0.0020 success=0.604 grad=3.13 adv=-0.000±0.313 t=1.94s
+[train] step=1560 samples=798720 loss=-0.0065 success=0.565 grad=2.94 adv=-0.000±0.353 t=1.92s
+[train] step=1570 samples=803840 loss=-0.0029 success=0.604 grad=2.98 adv=-0.000±0.309 t=1.89s
+[train] step=1580 samples=808960 loss=0.0004 success=0.543 grad=5.64 adv=-0.000±0.550 t=1.96s
+[train] step=1590 samples=814080 loss=0.0007 success=0.696 grad=4.21 adv=-0.000±0.424 t=1.91s
+[train] step=1600 samples=819200 loss=0.0100 success=0.492 grad=4.13 adv=0.000±0.428 t=1.91s
+[eval] running evaluation at step 1600...
+[eval] step=1600 pass@1=0.0000
+[train] step=1610 samples=824320 loss=-0.0070 success=0.646 grad=3.61 adv=-0.000±0.343 t=3.63s
+[train] step=1620 samples=829440 loss=0.0137 success=0.601 grad=3.81 adv=-0.000±0.389 t=1.93s
+[train] step=1630 samples=834560 loss=0.0014 success=0.585 grad=4.41 adv=-0.000±0.437 t=1.92s
+[train] step=1640 samples=839680 loss=-0.0011 success=0.709 grad=3.96 adv=0.000±0.391 t=2.00s
+[train] step=1650 samples=844800 loss=-0.0072 success=0.608 grad=3.29 adv=-0.000±0.379 t=1.96s
+[train] step=1660 samples=849920 loss=0.0056 success=0.560 grad=3.47 adv=0.000±0.337 t=1.89s
+[train] step=1670 samples=855040 loss=0.0019 success=0.607 grad=3.89 adv=0.000±0.438 t=1.92s
+[train] step=1680 samples=860160 loss=0.0063 success=0.550 grad=3.62 adv=-0.000±0.345 t=1.88s
+[train] step=1690 samples=865280 loss=0.0032 success=0.708 grad=2.93 adv=-0.000±0.327 t=1.92s
+[train] step=1700 samples=870400 loss=-0.0157 success=0.503 grad=5.43 adv=-0.000±0.563 t=1.99s
+[train] step=1710 samples=875520 loss=0.0083 success=0.656 grad=3.10 adv=-0.000±0.313 t=1.94s
+[train] step=1720 samples=880640 loss=0.0076 success=0.603 grad=3.42 adv=-0.000±0.362 t=1.96s
+[train] step=1730 samples=885760 loss=-0.0180 success=0.591 grad=2.92 adv=-0.000±0.280 t=1.90s
+[train] step=1740 samples=890880 loss=-0.0053 success=0.704 grad=2.65 adv=-0.000±0.264 t=1.92s
+[train] step=1750 samples=896000 loss=0.0056 success=0.591 grad=3.96 adv=-0.000±0.395 t=1.96s
+[train] step=1760 samples=901120 loss=0.0064 success=0.552 grad=3.41 adv=-0.000±0.329 t=1.92s
+[train] step=1770 samples=906240 loss=0.0001 success=0.613 grad=3.05 adv=-0.000±0.304 t=1.90s
+[train] step=1780 samples=911360 loss=-0.0081 success=0.562 grad=3.20 adv=0.000±0.314 t=1.90s
