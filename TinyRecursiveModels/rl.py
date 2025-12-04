@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from cgitb import small
+import itertools
 import json
 import os
 import signal
@@ -307,7 +309,26 @@ def main(args: argparse.Namespace) -> None:
         one_step = DDP(one_step, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
     one_opt = torch.optim.AdamW(one_step.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-    loader_it = iter(loader)
+    print("========== args.num_fixed_batches: ", args.num_fixed_batches)
+    if args.num_fixed_batches > 0:
+        if rank == 0:
+            print(f"[info] buffering {args.num_fixed_batches} batches for fixed-set training")
+        fixed_batches = []
+        temp_it = iter(loader)
+        for _ in range(args.num_fixed_batches):
+            try:
+                item = next(temp_it)
+                fixed_batches.append(item)
+            except StopIteration:
+                if rank == 0:
+                    print(f"[warn] requested {args.num_fixed_batches} batches but dataset only had {len(fixed_batches)}")
+                break
+        if len(fixed_batches) == 0:
+            raise ValueError("Dataset empty or failed to load any batches")
+        loader_it = itertools.cycle(fixed_batches)
+    else:
+        loader_it = iter(loader)
+
     samples_seen = 0
     global_step = 0
     start_time = time.time()
@@ -359,6 +380,34 @@ def main(args: argparse.Namespace) -> None:
     accum_steps = 0
     log_start_time = time.time()
 
+    # Run initial evaluation before training starts
+    if eval_loader is not None and args.eval_interval > 0 and args.eval_first:
+        if dist.is_initialized():
+            dist.barrier()
+        if rank == 0:
+            print(f"[eval] running initial evaluation at step {global_step}...")
+            pass_at_1 = run_eval(
+                teacher=teacher,
+                one_step=one_step,
+                eval_loader=eval_loader,
+                device=device,
+                steps=args.steps,
+                noise_scale=args.noise_scale,
+                max_puzzles=args.eval_puzzles,
+                num_cores=num_cores,
+            )
+            eval_metrics = EvalMetrics(
+                global_step=global_step,
+                samples_seen=samples_seen,
+                wall_time=time.time() - start_time,
+                pass_at_1=pass_at_1,
+                eval_puzzles=args.eval_puzzles,
+            )
+            logger.log_eval(eval_metrics)
+            print(f"[eval] step={global_step} pass@1={pass_at_1:.4f}")
+        if dist.is_initialized():
+            dist.barrier()
+
     if rank == 0:
         print("[info] starting training loop")
 
@@ -384,14 +433,19 @@ def main(args: argparse.Namespace) -> None:
         
         step_start_time = time.time()
         
-        try:
+        if args.num_fixed_batches > 0:
             _, batch, _ = next(loader_it)
-        except StopIteration:
-            loader_it = iter(loader)
-            _, batch, _ = next(loader_it)
+        else:
+            try:
+                _, batch, _ = next(loader_it)
+            except StopIteration:
+                loader_it = iter(loader)
+                _, batch, _ = next(loader_it)
         
         # Original batch shape: [B, ...]
         small_batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+        print(f"inputs shape: {small_batch['inputs'].shape} {small_batch['inputs'].sum().item()}")
+        # print(f"inputs: {small_batch['inputs'].view(small_batch['inputs'].shape[0], -1)[:20, :20]}")
         batch = {k: v.repeat_interleave(args.g, dim=0) for k, v in small_batch.items()}
         
         core_idx = torch.randint(0, num_cores, (1,)).item()
@@ -429,7 +483,10 @@ def main(args: argparse.Namespace) -> None:
 
         
         with torch.no_grad(): # computes the advantages for every generation
+            
             success = success_mask(logits, batch["labels"]).view(-1, args.g).to(torch.float32) # [B, g]
+            # print(success.shape)
+            # print(f"success: {success}")
             advantage = (success - success.mean(dim=1).unsqueeze(1)) / (success.std(dim=1).unsqueeze(1) + 1e-6) # [B, g]
             advantage = advantage.view(-1) # [B*g]
 
@@ -439,22 +496,25 @@ def main(args: argparse.Namespace) -> None:
             adv_min = advantage.min().item()
             adv_max = advantage.max().item()
             positive_adv_frac = (advantage > 0).float().mean().item()
-            print("frac of positive ROW advantages: ", (success.std(dim=1).unsqueeze(1) > 0).float().mean().item())
+            # print("frac of positive ROW advantages: ", (success.std(dim=1).unsqueeze(1) > 0).float().mean().item())
 
         loss = torch.tensor(0.0, requires_grad=True, device=device)
         assert len(records) == 1
         assert len(base_records) == 1
+        sum_diffs = 0
         for idx, ((_, x_clean, post_processed_noise, out), (_, _, _, base_out)) in enumerate(zip(records, base_records)):
-            rms = torch.sqrt(torch.mean(out.to(torch.float32) ** 2, dim=(1, 2)) + 1e-6)
-            std_dev = args.noise_scale * rms.view(-1) # [B]
+            rms = torch.sqrt(torch.mean((out - post_processed_noise) ** 2, dim=(1, 2)) + 1e-6)
+            std_dev = args.noise_scale * rms.view(-1) # [B*g]
             out = out.reshape(out.shape[0], -1)
             base_out = base_out.reshape(base_out.shape[0], -1).repeat_interleave(args.g, dim=0)
             assert out.shape == base_out.shape
             logprob = -((out - base_out)**2).mean(dim=1) / (2 * std_dev**2)
-            print(logprob.min().item(), (logprob * advantage).mean().item(), (logprob * advantage).std().item())
+            # print(logprob.min().item(), (logprob * advantage).mean().item(), (logprob * advantage).std().item())
             loss = loss + (logprob * advantage).mean()
+            sum_diffs += ((out - base_out)**2).mean(dim=1).sum().item()
 
         loss = -loss / len(records)
+        loss *= 10
         one_opt.zero_grad(set_to_none=True)
         loss.backward()
         
@@ -464,6 +524,24 @@ def main(args: argparse.Namespace) -> None:
         # Clip gradients
         torch.nn.utils.clip_grad_norm_(one_step.parameters(), args.max_grad_norm)
         one_opt.step()
+
+        new_sum_diffs = 0
+        _, base_records = teacher.streaming_forward_for_rl( # no **postprocessed** noise records
+            batch=small_batch,
+            steps=args.steps,
+            noise_scale=args.noise_scale,
+            collect_core_io=True,
+            core_idxs=[core_idx],
+            replacements=replacements,
+            fixed_noise_seeds=fixed_noise_seeds,
+            post_process_noise_scale=None,
+        )
+        for idx, ((_, x_clean, post_processed_noise, out), (_, _, _, base_out)) in enumerate(zip(records, base_records)):
+            out = out.reshape(out.shape[0], -1)
+            base_out = base_out.reshape(base_out.shape[0], -1).repeat_interleave(args.g, dim=0)
+            assert out.shape == base_out.shape
+            new_sum_diffs += ((out - base_out)**2).mean(dim=1).sum().item()
+        print(f"sum_diffs: {sum_diffs} new_sum_diffs: {new_sum_diffs} diff: {new_sum_diffs - sum_diffs}")
 
         global_step += 1
         samples_seen += batch["inputs"].shape[0]
@@ -600,11 +678,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--post-process-noise-scale", type=float, default=0.02, help="RMS-scaled noise std for post-processed noise")
     p.add_argument("--batch-size", type=int, default=32, help="Per-GPU batch size (each sample generates g completions)")
     p.add_argument("--max-steps", type=int, default=100_000, help="Maximum training steps")
+    p.add_argument("--num-fixed-batches", type=int, default=0, help="If > 0, cache this many batches and cycle them")
     
     p.add_argument("--log-interval", type=int, default=10, help="Log metrics every N steps")
     p.add_argument("--ckpt-interval", type=int, default=1000, help="Save checkpoint every N steps")
     p.add_argument("--eval-interval", type=int, default=500, help="Run evaluation every N steps (0 to disable)")
     p.add_argument("--eval-puzzles", type=int, default=2048, help="Number of puzzles for evaluation")
+    p.add_argument("--eval-first", action="store_true", help="Run evaluation before training starts")
     
     return p.parse_args()
 

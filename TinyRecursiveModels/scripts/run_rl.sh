@@ -23,11 +23,13 @@ torchrun \
     --batch-size 32 \
     --g 16 \
     --lr 1e-5 \
-    --max-steps 100000 \
+    --max-steps 10000 \
     --log-interval 10 \
     --ckpt-interval 500 \
-    --eval-interval 1000 \
+    --eval-interval 200 \
     --eval-puzzles 2048 \
     --noise-scale 0.02 \
     --steps 4 \
-    --post-process-noise-scale 0.5
+    --post-process-noise-scale 0.5 \
+    --num-fixed-batches 1 \
+    --max-grad-norm 5.0
