@@ -411,7 +411,7 @@ class TinyRecursiveReasoningModel_ACTV1_Inner(nn.Module):
                 x_noisy = x_clean
 
             if replacements is not None and core_idx in replacements:
-                out = replacements[core_idx](x_clean, noise)
+                out = replacements[core_idx](x_clean, noise, core_idx)
             else:
                 hidden_states = x_noisy
                 for layer in self.L_level.layers:

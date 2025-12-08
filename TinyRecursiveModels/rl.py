@@ -188,7 +188,7 @@ def set_rng_state(state: Dict[str, Any], device: torch.device):
 @torch.no_grad()
 def run_eval(
     teacher,
-    one_step: nn.Module,
+    core_models: List[nn.Module],
     eval_loader,
     device: torch.device,
     steps: int,
@@ -197,10 +197,12 @@ def run_eval(
     num_cores: int,
 ) -> float:
     """Run evaluation and return pass@1 accuracy."""
-    one_step.eval()
-    core = one_step.module if isinstance(one_step, DDP) else one_step
+    for core_model in core_models:
+        core_model.eval()
     
-    def replacement_fn(x_clean: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
+    
+    def replacement_fn(x_clean: torch.Tensor, noise: torch.Tensor, cur_core_idx: int) -> torch.Tensor:
+        core = core_models[cur_core_idx].module if isinstance(core_models[cur_core_idx], DDP) else core_models[cur_core_idx]
         rms = torch.sqrt(torch.mean(x_clean.to(torch.float32) ** 2, dim=(1, 2)) + 1e-6)
         eps = noise.to(torch.float32) / (noise_scale * rms.view(-1, 1, 1) + 1e-6)
         return core(x_clean.to(torch.float32), eps)
@@ -224,7 +226,7 @@ def run_eval(
         total += batch["inputs"].shape[0]
         batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
         
-        logits, _ = teacher.streaming_forward(
+        logits, _ = teacher.streaming_forward_for_rl(
             batch=batch,
             steps=steps,
             noise_scale=0.0,  # no additional noise during eval
@@ -234,7 +236,8 @@ def run_eval(
         mask = success_mask(logits, batch["labels"])
         correct += int(mask.sum().item())
     
-    one_step.train()
+    for core_model in core_models:
+        core_model.train()
     return correct / max(1, total)
 
 
@@ -293,21 +296,29 @@ def main(args: argparse.Namespace) -> None:
     if rank == 0:
         print(f"[info] training shared one-step for all cores; num_cores={num_cores}")
 
-    one_step = OneStepCoreModel(
-        seq_len_clean=seq_len,
-        hidden_dim=hidden_dim,
-        num_layers=core_layers,
-        num_heads=teacher.inner.config.num_heads,
-        expansion=teacher.inner.config.expansion,
-        rms_norm_eps=teacher.inner.config.rms_norm_eps,
-        rope_theta=teacher.inner.config.rope_theta,
-    ).to(device)
-    state = torch.load(args.onestep_checkpoint, map_location=device)
-    one_step.load_state_dict(state["one_step"])
+    core_models = [
+        OneStepCoreModel(
+            seq_len_clean=seq_len,
+            hidden_dim=hidden_dim,
+            num_layers=core_layers,
+            num_heads=teacher.inner.config.num_heads,
+            expansion=teacher.inner.config.expansion,
+            rms_norm_eps=teacher.inner.config.rms_norm_eps,
+            rope_theta=teacher.inner.config.rope_theta,
+        ).to(device)
+        for _ in range(num_cores)
+    ]
+    if args.onestep_checkpoint is not None:
+        state = torch.load(args.onestep_checkpoint, map_location=device)
+        for i, core_model in enumerate(core_models):
+            core_model.load_state_dict(state["one_step"])
 
     if world_size > 1:
-        one_step = DDP(one_step, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
-    one_opt = torch.optim.AdamW(one_step.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        core_models = [DDP(core_model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False) for core_model in core_models]
+    one_opt = torch.optim.AdamW(
+        itertools.chain.from_iterable(core_model.parameters() for core_model in core_models),
+        lr=args.lr, weight_decay=args.weight_decay
+    )
 
     print("========== args.num_fixed_batches: ", args.num_fixed_batches)
     if args.num_fixed_batches > 0:
@@ -334,14 +345,14 @@ def main(args: argparse.Namespace) -> None:
     start_time = time.time()
     
     # Resume from checkpoint if available
-    if resume_from:
-        global_step, samples_seen, rng_state = load_checkpoint(
-            resume_from, one_step, one_opt, device
-        )
-        if rng_state:
-            set_rng_state(rng_state, device)
-        if rank == 0:
-            print(f"[resume] restored global_step={global_step}, samples_seen={samples_seen}")
+    # if resume_from:
+    #     global_step, samples_seen, rng_state = load_checkpoint(
+    #         resume_from, one_step, one_opt, device
+    #     )
+    #     if rng_state:
+    #         set_rng_state(rng_state, device)
+    #     if rank == 0:
+    #         print(f"[resume] restored global_step={global_step}, samples_seen={samples_seen}")
     
     # Prepare eval loader
     eval_loader = None
@@ -388,7 +399,7 @@ def main(args: argparse.Namespace) -> None:
             print(f"[eval] running initial evaluation at step {global_step}...")
             pass_at_1 = run_eval(
                 teacher=teacher,
-                one_step=one_step,
+                core_models=core_models,
                 eval_loader=eval_loader,
                 device=device,
                 steps=args.steps,
@@ -418,13 +429,13 @@ def main(args: argparse.Namespace) -> None:
                 print("[signal] saving checkpoint before exit...")
                 save_checkpoint(
                     out_dir / "preempt.pt",
-                    one_step, one_opt, global_step, samples_seen,
+                    core_models, one_opt, global_step, samples_seen,
                     get_rng_state(device), args
                 )
                 # Also update latest
                 save_checkpoint(
                     latest_ckpt,
-                    one_step, one_opt, global_step, samples_seen,
+                    core_models, one_opt, global_step, samples_seen,
                     get_rng_state(device), args
                 )
             if dist.is_initialized():
@@ -444,16 +455,22 @@ def main(args: argparse.Namespace) -> None:
         
         # Original batch shape: [B, ...]
         small_batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
-        print(f"inputs shape: {small_batch['inputs'].shape} {small_batch['inputs'].sum().item()}")
+        # print(f"inputs shape: {small_batch['inputs'].shape} {small_batch['inputs'].sum().item()}")
         # print(f"inputs: {small_batch['inputs'].view(small_batch['inputs'].shape[0], -1)[:20, :20]}")
+        small_batch = {k: v[0].expand_as(v) for k, v in small_batch.items()}
+        # print(f"inputs 0: {small_batch['inputs'][0].sum().item()} inputs 1: {small_batch['inputs'][1].sum().item()} inputs 2: {small_batch['inputs'][2].sum().item()} inputs 3: {small_batch['inputs'][3].sum().item()}")
         batch = {k: v.repeat_interleave(args.g, dim=0) for k, v in small_batch.items()}
         
         core_idx = torch.randint(0, num_cores, (1,)).item()
-        def replacement_fn(x_clean: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
+        def replacement_fn(x_clean: torch.Tensor, noise: torch.Tensor, cur_core_idx: int) -> torch.Tensor:
             rms = torch.sqrt(torch.mean(x_clean.to(torch.float32) ** 2, dim=(1, 2)) + 1e-6)
             eps = noise.to(torch.float32) / (args.noise_scale * rms.view(-1, 1, 1) + 1e-6)
-            core = one_step.module if isinstance(one_step, DDP) else one_step
-            return core(x_clean.to(torch.float32), eps)
+            core = core_models[cur_core_idx].module if isinstance(core_models[cur_core_idx], DDP) else core_models[cur_core_idx]
+            if cur_core_idx == core_idx: # only want grads for the current core we're injecting noise into
+                return core(x_clean.to(torch.float32), eps)
+            else:
+                with torch.no_grad():
+                    return core(x_clean.to(torch.float32), eps)
 
         replacements = {core_idx: replacement_fn}
         fixed_noise_seeds = {idx: torch.randint(0, 1000000, (1,)) for idx in range(num_cores)} # fix the inner noise for all the cores
@@ -501,7 +518,7 @@ def main(args: argparse.Namespace) -> None:
         loss = torch.tensor(0.0, requires_grad=True, device=device)
         assert len(records) == 1
         assert len(base_records) == 1
-        sum_diffs = 0
+        # sum_diffs = 0
         for idx, ((_, x_clean, post_processed_noise, out), (_, _, _, base_out)) in enumerate(zip(records, base_records)):
             rms = torch.sqrt(torch.mean((out - post_processed_noise) ** 2, dim=(1, 2)) + 1e-6)
             std_dev = args.noise_scale * rms.view(-1) # [B*g]
@@ -511,37 +528,36 @@ def main(args: argparse.Namespace) -> None:
             logprob = -((out - base_out)**2).mean(dim=1) / (2 * std_dev**2)
             # print(logprob.min().item(), (logprob * advantage).mean().item(), (logprob * advantage).std().item())
             loss = loss + (logprob * advantage).mean()
-            sum_diffs += ((out - base_out)**2).mean(dim=1).sum().item()
+            # sum_diffs += ((out - base_out)**2).mean(dim=1).sum().item()
 
         loss = -loss / len(records)
-        loss *= 10
         one_opt.zero_grad(set_to_none=True)
         loss.backward()
         
         # Compute gradient norm before clipping
-        grad_norm_before = compute_grad_norm(one_step)
+        grad_norm_before = compute_grad_norm(core_models[core_idx])
         
         # Clip gradients
-        torch.nn.utils.clip_grad_norm_(one_step.parameters(), args.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(core_models[core_idx].parameters(), args.max_grad_norm)
         one_opt.step()
 
-        new_sum_diffs = 0
-        _, base_records = teacher.streaming_forward_for_rl( # no **postprocessed** noise records
-            batch=small_batch,
-            steps=args.steps,
-            noise_scale=args.noise_scale,
-            collect_core_io=True,
-            core_idxs=[core_idx],
-            replacements=replacements,
-            fixed_noise_seeds=fixed_noise_seeds,
-            post_process_noise_scale=None,
-        )
-        for idx, ((_, x_clean, post_processed_noise, out), (_, _, _, base_out)) in enumerate(zip(records, base_records)):
-            out = out.reshape(out.shape[0], -1)
-            base_out = base_out.reshape(base_out.shape[0], -1).repeat_interleave(args.g, dim=0)
-            assert out.shape == base_out.shape
-            new_sum_diffs += ((out - base_out)**2).mean(dim=1).sum().item()
-        print(f"sum_diffs: {sum_diffs} new_sum_diffs: {new_sum_diffs} diff: {new_sum_diffs - sum_diffs}")
+        # new_sum_diffs = 0
+        # _, base_records = teacher.streaming_forward_for_rl( # no **postprocessed** noise records
+        #     batch=small_batch,
+        #     steps=args.steps,
+        #     noise_scale=args.noise_scale,
+        #     collect_core_io=True,
+        #     core_idxs=[core_idx],
+        #     replacements=replacements,
+        #     fixed_noise_seeds=fixed_noise_seeds,
+        #     post_process_noise_scale=None,
+        # )
+        # for idx, ((_, x_clean, post_processed_noise, out), (_, _, _, base_out)) in enumerate(zip(records, base_records)):
+        #     out = out.reshape(out.shape[0], -1)
+        #     base_out = base_out.reshape(base_out.shape[0], -1).repeat_interleave(args.g, dim=0)
+        #     assert out.shape == base_out.shape
+        #     new_sum_diffs += ((out - base_out)**2).mean(dim=1).sum().item()
+        # print(f"sum_diffs: {sum_diffs} new_sum_diffs: {new_sum_diffs} diff: {new_sum_diffs - sum_diffs}")
 
         global_step += 1
         samples_seen += batch["inputs"].shape[0]
@@ -608,7 +624,7 @@ def main(args: argparse.Namespace) -> None:
                 print(f"[eval] running evaluation at step {global_step}...")
                 pass_at_1 = run_eval(
                     teacher=teacher,
-                    one_step=one_step,
+                    core_models=core_models,
                     eval_loader=eval_loader,
                     device=device,
                     steps=args.steps,

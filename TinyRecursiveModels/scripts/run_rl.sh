@@ -20,16 +20,22 @@ torchrun \
     --onestep-checkpoint "${ONESTEP_CHECKPOINT}" \
     --data-dir "${DATA_DIR}" \
     --output-dir "${OUTPUT_DIR}" \
-    --batch-size 32 \
+    --batch-size 16 \
     --g 16 \
     --lr 1e-5 \
     --max-steps 10000 \
     --log-interval 10 \
-    --ckpt-interval 500 \
-    --eval-interval 200 \
+    --ckpt-interval 100000 \
+    --eval-interval 10000 \
     --eval-puzzles 2048 \
     --noise-scale 0.02 \
     --steps 4 \
     --post-process-noise-scale 0.5 \
-    --num-fixed-batches 1 \
-    --max-grad-norm 5.0
+    --num-fixed-batches 1
+    # --eval-first
+
+
+# TODO: experiment with 1 fixed batch and see if it's able to overfit: NOPE
+# TODO: experiment with 1 fixed batch and batch size 1 and see if it's able to overfit: 
+    # note eval interval is really big right now
+# TODO: increase loss scale

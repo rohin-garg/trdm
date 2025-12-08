@@ -21,3 +21,13 @@
 {"global_step": 0, "samples_seen": 0, "wall_time": 17.389758348464966, "pass_at_1": 0.57470703125, "eval_puzzles": 2048}
 {"global_step": 200, "samples_seen": 102400, "wall_time": 426.69416880607605, "pass_at_1": 0.48193359375, "eval_puzzles": 2048}
 {"global_step": 200, "samples_seen": 102400, "wall_time": 427.36234068870544, "pass_at_1": 0.5126953125, "eval_puzzles": 2048}
+{"global_step": 0, "samples_seen": 0, "wall_time": 17.851903915405273, "pass_at_1": 0.57470703125, "eval_puzzles": 2048}
+{"global_step": 0, "samples_seen": 0, "wall_time": 17.35346007347107, "pass_at_1": 0.57470703125, "eval_puzzles": 2048}
+{"global_step": 200, "samples_seen": 102400, "wall_time": 419.038134098053, "pass_at_1": 0.57421875, "eval_puzzles": 2048}
+{"global_step": 400, "samples_seen": 204800, "wall_time": 817.3904016017914, "pass_at_1": 0.560546875, "eval_puzzles": 2048}
+{"global_step": 0, "samples_seen": 0, "wall_time": 17.374521732330322, "pass_at_1": 0.57470703125, "eval_puzzles": 2048}
+{"global_step": 200, "samples_seen": 102400, "wall_time": 419.29978704452515, "pass_at_1": 0.56396484375, "eval_puzzles": 2048}
+{"global_step": 0, "samples_seen": 0, "wall_time": 17.34839153289795, "pass_at_1": 0.57470703125, "eval_puzzles": 2048}
+{"global_step": 200, "samples_seen": 102400, "wall_time": 419.1452269554138, "pass_at_1": 0.5654296875, "eval_puzzles": 2048}
+{"global_step": 0, "samples_seen": 0, "wall_time": 17.34788155555725, "pass_at_1": 0.57470703125, "eval_puzzles": 2048}
+{"global_step": 200, "samples_seen": 3200, "wall_time": 194.17164754867554, "pass_at_1": 0.56884765625, "eval_puzzles": 2048}
