@@ -457,7 +457,7 @@ def main(args: argparse.Namespace) -> None:
         small_batch = {k: v.to(device, non_blocking=True) for k, v in batch.items()}
         # print(f"inputs shape: {small_batch['inputs'].shape} {small_batch['inputs'].sum().item()}")
         # print(f"inputs: {small_batch['inputs'].view(small_batch['inputs'].shape[0], -1)[:20, :20]}")
-        small_batch = {k: v[0].expand_as(v) for k, v in small_batch.items()}
+        # small_batch = {k: v[0].expand_as(v) for k, v in small_batch.items()}
         # print(f"inputs 0: {small_batch['inputs'][0].sum().item()} inputs 1: {small_batch['inputs'][1].sum().item()} inputs 2: {small_batch['inputs'][2].sum().item()} inputs 3: {small_batch['inputs'][3].sum().item()}")
         batch = {k: v.repeat_interleave(args.g, dim=0) for k, v in small_batch.items()}
         
